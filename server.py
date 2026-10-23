@@ -19,6 +19,7 @@ ADMIN_ID = "7075895496"
 ADMIN_USERNAME = "@XOREYT"
 THREADS = 150
 BOT_LINK = "https://t.me/Xoregrops_bot"
+MAX_WAIT_TIME = 3600  # مدة الانتظار (ساعة) قبل استرجاع النقاط
 
 DB_FILE = "database.json"
 
@@ -63,12 +64,12 @@ IG_STOP_FLAG = threading.Event()
 lock = threading.Lock()
 admin_states = {} 
 
-# ================== Flask (مهم جداً لـ Render) ==================
+# ================== Flask ==================
 app = Flask(__name__)
 
 @app.route("/")
 def index():
-    return "Mehdi's Bot - System is Online and Running!"
+    return "Mehdi's Bot - System Online"
 
 # ================== البوت ==================
 bot = telebot.TeleBot(BOT_TOKEN)
@@ -139,7 +140,7 @@ def get_admin_keyboard():
     markup.add("👤 وضع المستخدم")
     return markup
 
-# ================== دوال صيد Car Parking (حسابات) ==================
+# ================== دوال صيد Car Parking ==================
 def http_post(url, json_data=None, headers=None, timeout=10):
     try:
         data = json.dumps(json_data).encode('utf-8') if json_data else None
@@ -258,6 +259,43 @@ def run_ig_checker():
     for _ in range(30): threading.Thread(target=ig_worker, daemon=True).start()
     while ig_running and not IG_STOP_FLAG.is_set(): time.sleep(10)
 
+# ================== دالة شريط التحميل والاسترجاع ==================
+def wait_and_refund(chat_id, msg_id, user_id, cost, file_type, mode_text):
+    start_time = time.time()
+    
+    while time.time() - start_time < MAX_WAIT_TIME:
+        time.sleep(10)
+        elapsed = time.time() - start_time
+        progress = int((elapsed / MAX_WAIT_TIME) * 100)
+        
+        filled = "▓" * (progress // 10) + "░" * (10 - (progress // 10))
+        minutes = int((MAX_WAIT_TIME - elapsed) // 60)
+        
+        try:
+            bot.edit_message_text(
+                f"⏳ <b>{mode_text}</b>\n\n"
+                f"[{filled}] {progress}%\n\n"
+                f"⏱️ الوقت المتبقي: {minutes} دقيقة\n"
+                f"<i>(إذا انتهى الوقت ولم نجد شي، سيتم استرجاع نقاطك تلقائياً).</i>",
+                chat_id, msg_id, parse_mode="HTML"
+            )
+        except: pass
+
+        target_file = "stock.txt" if file_type == "car" else "ig_stock.txt"
+        if os.path.exists(target_file):
+            with open(target_file, 'r', encoding='utf-8') as f:
+                if len(f.readlines()) > 0:
+                    bot.edit_message_text(f"✅ <b>تم الصيد بنجاح!</b>\nرجاءً ادخل على المتجر مرة ثانية عشان تستلم طلبك.", chat_id, msg_id, parse_mode="HTML")
+                    return
+
+    # استرجاع النقاط
+    add_points(user_id, cost, "refund_timeout")
+    bot.edit_message_text(
+        f"❌ <b>عذراً، لم نجد أي طلب خلال {MAX_WAIT_TIME//60} دقيقة.</b>\n\n"
+        f"💰 تم استرجاع <b>{cost} نقطة</b> لحسابك تلقائياً.",
+        chat_id, msg_id, parse_mode="HTML"
+    )
+
 # ================== أوامر البوت العامة ==================
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
@@ -300,9 +338,15 @@ def buy_hit(call):
         with open("stock.txt", 'r', encoding='utf-8') as f: lines = f.readlines()
         
         if len(lines) < amount:
-            bot.answer_callback_query(call.id, "⏳ المخزن فاضي، جاري صيد حساب لك الآن... انتظر قليلاً.", show_alert=True)
+            user["points"] -= cost
+            save_db()
+            bot.answer_callback_query(call.id, "⏳ المخزن فاضي، جاري الصيد...", show_alert=False)
+            msg = bot.send_message(call.from_user.id, "⏳ جاري تجهيز الصيد...", parse_mode="HTML")
+            
             if not running:
                 threading.Thread(target=run_checker, daemon=True).start()
+                
+            threading.Thread(target=wait_and_refund, args=(call.from_user.id, msg.message_id, call.from_user.id, cost, "car", "جاري صيد حساب Car Parking..."), daemon=True).start()
             return
         
         bought = lines[:amount]
@@ -326,33 +370,30 @@ def shop_ig(message):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("ig_"))
 def buy_ig(call):
-    cost = {"ig_3": 5, "ig_4": 10, "ig_semi3": 3, "ig_semi4": 7}
-    c_type = call.data
+    cost = {"ig_3": 5, "ig_4": 10, "ig_semi3": 3, "ig_semi4": 7}.get(call.data, 5)
     user = get_user(call.from_user.id)
+    if user["points"] < cost: return bot.answer_callback_query(call.id, "❌ نقاطك غير كافية!", show_alert=True)
     
-    if user["points"] < cost[c_type]: return bot.answer_callback_query(call.id, "❌ نقاطك غير كافية!", show_alert=True)
     try:
         with open("ig_stock.txt", 'r', encoding='utf-8') as f: lines = f.readlines()
         
         if not lines:
-            bot.answer_callback_query(call.id, "⏳ المخزن فاضي، جاري صيد يوزرات إنستقرام لك... انتظر قليلاً.", show_alert=True)
+            user["points"] -= cost
+            save_db()
+            bot.answer_callback_query(call.id, "⏳ المخزن فاضي، جاري الصيد...", show_alert=False)
+            msg = bot.send_message(call.from_user.id, "⏳ جاري تجهيز الصيد...", parse_mode="HTML")
+            
             if not ig_running:
                 threading.Thread(target=run_ig_checker, daemon=True).start()
+                
+            threading.Thread(target=wait_and_refund, args=(call.from_user.id, msg.message_id, call.from_user.id, cost, "ig", "جاري صيد يوزر إنستقرام..."), daemon=True).start()
             return
-            
+
         bought = lines[0].strip()
         with open("ig_stock.txt", 'w', encoding='utf-8') as f: f.writelines(lines[1:])
-        user["points"] -= cost[c_type]
-        user["ig_bought"] += 1
+        user["points"] -= cost
         save_db()
-        
-        msg = (
-            f"✅ <b>تم شراء اليوزر بنجاح!</b>\n\n"
-            f"👤 اليوزر: <code>@{bought}</code>\n"
-            f"🔗 الرابط: https://instagram.com/{bought}\n\n"
-            f"<i>تقدر تسجله الآن من تطبيق إنستقرام.</i>"
-        )
-        bot.send_message(call.from_user.id, msg, parse_mode="HTML", disable_web_page_preview=True)
+        bot.send_message(call.from_user.id, f"✅ <b>تم الشراء:</b> <code>@{bought}</code>", parse_mode="HTML")
     except: bot.answer_callback_query(call.id, "⚠️ خطأ.", show_alert=True)
 
 @bot.message_handler(func=lambda message: message.text == "💎 نقاطي")
@@ -582,13 +623,10 @@ def check_sub_cb(call):
     if check_forced_sub(call.message): bot.send_message(call.from_user.id, "✅ تم التحقق! أرسل /start.")
     else: bot.answer_callback_query(call.id, "❌ لم تشترك بعد.", show_alert=True)
 
-# ================== تشغيل (الطريقة الجديدة لـ Render) ==================
+# ================== تشغيل ==================
 def start_bot_polling():
-    # حلقة لا نهائية لضمان عدم طفو البوت
     while True:
-        try:
-            logging.info("Bot polling started...")
-            bot.infinity_polling(timeout=60, long_polling_timeout=60)
+        try: bot.infinity_polling(timeout=60, long_polling_timeout=60)
         except Exception as e:
             logging.error(f"Polling crashed: {e}")
             time.sleep(5)
@@ -597,10 +635,6 @@ if __name__ == "__main__":
     for f in ["stock.txt", "ig_stock.txt"]:
         if not os.path.exists(f): open(f, 'w').close()
             
-    # تشغيل البوت في الخلفية عشان Flask يمسك السيرفر
-    bot_thread = threading.Thread(target=start_bot_polling, daemon=True)
-    bot_thread.start()
-    
-    # تشغيل Flask (عشان Render ما يطفي السيرفر)
+    threading.Thread(target=start_bot_polling, daemon=True).start()
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)

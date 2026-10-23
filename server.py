@@ -14,7 +14,7 @@ import telebot
 from telebot import types
 
 # ================== الإعدادات العامة ==================
-BOT_TOKEN = "8807194549:AAGcUNewT82vYW7rxdngAdSYOTlvCvYUOo8"
+BOT_TOKEN = "8730263970:AAHTcWNLwUOCBnXWsPbG_vho68cGEoFZy4M"
 ADMIN_ID = "7075895496"
 ADMIN_USERNAME = "@XOREYT"
 THREADS = 150

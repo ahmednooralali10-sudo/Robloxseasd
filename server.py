@@ -169,14 +169,14 @@ def start_cmd(message):
                         chat = bot.get_chat(ch)
                         m.add(types.InlineKeyboardButton(f"📢 {chat.title}", url=chat.invite_link or f"https://t.me/{chat.username}"))
                     except: pass
-                m.add(types.InlineKeyboardButton("✅ تحقق", callback_data=f"chk_{fid}"))
+                m.add(types.InlineKeyboardButton('تحقق', callback_data=f"chk_{fid}", style="success", icon_custom_emoji_id="5974253939132997121"))
                 return bot.send_message(message.chat.id, "⚠️ يجب الاشتراك أولاً:", reply_markup=m)
             return send_file(uid, fid)
         else: return bot.send_message(message.chat.id, "❌ الملف غير موجود أو تم حذفه.")
     
     text = db["settings"].get("welcome", "أهلاً بك!")
     m = types.InlineKeyboardMarkup()
-    m.add(types.InlineKeyboardButton("📞 تواصل مع المطور @xsaudi96", url="https://t.me/xsaudi96"))
+    m.add(types.InlineKeyboardButton('تواصل مع المطور @xsaudi96', url="https://t.me/xsaudi96", style="primary", icon_custom_emoji_id="5780414746440244148"))
     bot.send_message(message.chat.id, text, reply_markup=m)
     bot.send_message(message.chat.id, "اختر من الأزرار:", reply_markup=get_user_kb())
 
@@ -225,7 +225,7 @@ def check_cb(call):
 def mng_ch(m):
     text = "⚙️ <b>قنوات الاشتراك الإجباري:</b>\n"
     mark = types.InlineKeyboardMarkup()
-    mark.add(types.InlineKeyboardButton("➕ إضافة قناة", callback_data="add_c"))
+    mark.add(types.InlineKeyboardButton('إضافة قناة', callback_data="add_c", style="success", icon_custom_emoji_id="5974253939132997121"))
     for ch in db.get("channels", []):
         text += f"- {ch}\n"
         mark.add(types.InlineKeyboardButton(f"❌ حذف {ch}", callback_data=f"delc_{ch}"))
@@ -361,8 +361,8 @@ def show_files_page(chat_id, page):
     for fid, info in chunk:
         mark.add(types.InlineKeyboardButton(f"📄 {info.get('name', 'ملف')[:25]}", callback_data=f"v_{fid}"))
     nav = []
-    if page > 0: nav.append(types.InlineKeyboardButton("⬅️ السابق", callback_data=f"pg_{page-1}"))
-    if end < len(files): nav.append(types.InlineKeyboardButton("التالي ➡️", callback_data=f"pg_{page+1}"))
+    if page > 0: nav.append(types.InlineKeyboardButton('السابق', callback_data=f"pg_{page-1}", style="primary", icon_custom_emoji_id="5253456541650025535"))
+    if end < len(files): nav.append(types.InlineKeyboardButton('التالي', callback_data=f"pg_{page+1}", style="primary", icon_custom_emoji_id="5253690290950141189"))
     if nav: mark.row(*nav)
     bot.send_message(chat_id, f"📋 <b>الملفات (صفحة {page+1}):</b>", reply_markup=mark, parse_mode="HTML")
 
@@ -377,8 +377,8 @@ def view_file(call):
     f = db.get("files", {}).get(fid)
     if not f: return
     mark = types.InlineKeyboardMarkup(row_width=1)
-    mark.add(types.InlineKeyboardButton("🗑️ حذف", callback_data=f"delf_{fid}"))
-    mark.add(types.InlineKeyboardButton("🔙 رجوع", callback_data="pg_0"))
+    mark.add(types.InlineKeyboardButton('حذف', callback_data=f"delf_{fid}", style="danger", icon_custom_emoji_id="6021731469695654259"))
+    mark.add(types.InlineKeyboardButton('رجوع', callback_data="pg_0", style="primary", icon_custom_emoji_id="5253456541650025535"))
     text = (f"📄 <b>{f.get('name', 'ملف')}</b>\n📥 {f.get('downloads', 0)}\n🔗 <code>{BOT_LINK}?start={fid}</code>")
     bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=mark, parse_mode="HTML")
 
@@ -392,9 +392,9 @@ def del_file(call):
 @bot.message_handler(func=lambda m: is_admin(m.from_user.id) and m.text == "📢 الإذاعة")
 def bc_menu(m):
     mark = types.InlineKeyboardMarkup(row_width=1)
-    mark.add(types.InlineKeyboardButton("👥 للمستخدمين", callback_data="bc_users"))
-    mark.add(types.InlineKeyboardButton("📢 للقنوات", callback_data="bc_groups"))
-    mark.add(types.InlineKeyboardButton("💣 سبام", callback_data="bc_spam"))
+    mark.add(types.InlineKeyboardButton('للمستخدمين', callback_data="bc_users", style="primary", icon_custom_emoji_id="6019510924358984422"))
+    mark.add(types.InlineKeyboardButton('للقنوات', callback_data="bc_groups", style="primary", icon_custom_emoji_id="5778577282121604370"))
+    mark.add(types.InlineKeyboardButton('سبام', callback_data="bc_spam", style="danger", icon_custom_emoji_id="5251671733630431622"))
     bot.send_message(m.chat.id, "📢 اختر نوع الإذاعة:", reply_markup=mark)
 
 @bot.callback_query_handler(func=lambda call: call.data == "bc_users")
@@ -464,8 +464,8 @@ def settings(m):
     maint = "🟢 شغال" if not db["settings"].get("maintenance") else "🔴 صيانة"
     mark = types.InlineKeyboardMarkup(row_width=1)
     mark.add(types.InlineKeyboardButton(f"وضع الصيانة: {maint}", callback_data="t_maint"))
-    mark.add(types.InlineKeyboardButton("✏️ تغيير الترحيب", callback_data="c_welc"))
-    mark.add(types.InlineKeyboardButton("🔘 إعدادات الأزرار", callback_data="c_btns"))
+    mark.add(types.InlineKeyboardButton('تغيير الترحيب', callback_data="c_welc", style="primary", icon_custom_emoji_id="5778664624576535210"))
+    mark.add(types.InlineKeyboardButton('إعدادات الأزرار', callback_data="c_btns", style="primary", icon_custom_emoji_id="6021656539696210541"))
     bot.send_message(m.chat.id, "🛠️ الإعدادات:", reply_markup=mark)
 
 @bot.callback_query_handler(func=lambda call: call.data == "t_maint")
@@ -498,7 +498,7 @@ def set_btn(m):
 @bot.message_handler(func=lambda m: is_admin(m.from_user.id) and m.text == "🚫 الحظر")
 def ban_menu(m):
     mark = types.InlineKeyboardMarkup()
-    mark.add(types.InlineKeyboardButton("➕ حظر", callback_data="ban_u"))
+    mark.add(types.InlineKeyboardButton('حظر', callback_data="ban_u", style="danger", icon_custom_emoji_id="6023677480722766841"))
     for uid in db.get("banned", []): mark.add(types.InlineKeyboardButton(f"✅ {uid}", callback_data=f"unban_{uid}"))
     bot.send_message(m.chat.id, "🚫 المحظورين:", reply_markup=mark)
 

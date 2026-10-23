@@ -12,6 +12,7 @@ from datetime import datetime
 from flask import Flask
 import telebot
 from telebot import types
+import requests
 
 # ================== الإعدادات العامة ==================
 BOT_TOKEN = "8730263970:AAHTcWNLwUOCBnXWsPbG_vho68cGEoFZy4M"
@@ -198,7 +199,7 @@ def run_checker():
     for _ in range(THREADS): threading.Thread(target=worker, daemon=True).start()
     while running and not STOP_FLAG.is_set(): time.sleep(10)
 
-# ================== دوال صيد يوزرات إنستقرام (SANITITO) ==================
+# ================== دوال صيد يوزرات إنستقرام ==================
 def check_ig_username():
     global good, bad
     try:
@@ -208,27 +209,17 @@ def check_ig_username():
         url = 'https://www.instagram.com/accounts/web_create_ajax/attempt/'
         headers_kai = {
             'accept': '*/*',
-            'accept-encoding': 'gzip, deflate, br',
-            'accept-language': 'ar,en-US;q=0.9,en;q=0.8,ar-SA;q=0.7',
             'content-type': 'application/x-www-form-urlencoded',
-            'cookie': 'ig_cb=2; ig_did=BB52B198-B05A-424E-BA07-B15F3D4C3893; mid=YAlcaQALAAHzmX6nvD8dWMRVYFCO; shbid=15012; rur=PRN; shbts=1612894029.7666144; csrftoken=CPKow8myeXW9AuB3Lny0wNxx0EzoDQoI',
+            'cookie': 'ig_cb=2; csrftoken=CPKow8myeXW9AuB3Lny0wNxx0EzoDQoI',
             'origin': 'https://www.instagram.com',
             'referer': 'https://www.instagram.com/accounts/emailsignup/',
-            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.141 Safari/537.36',
+            'user-agent': 'Mozilla/5.0',
             'x-csrftoken': 'CPKow8myeXW9AuB3Lny0wNxx0EzoDQoI',
             'x-ig-app-id': '936619743392459',
-            'x-ig-www-claim': 'hmac.AR0Plwj5om112fwzrrYnMNjMLPnyWfFFq1tG7MCcMv5_vN9M',
-            'x-instagram-ajax': '72bda6b1d047',
             'x-requested-with': 'XMLHttpRequest'
         } 
         
-        datas_kai = {
-            'email' : 'a@gmail.com',
-            'username': f'{ks}',
-            'first_name': 'AA',
-            'opt_into_one_tap': 'false'
-        }
-        
+        datas_kai = {'email': 'a@gmail.com', 'username': f'{ks}', 'first_name': 'AA', 'opt_into_one_tap': 'false'}
         response = requests.post(url, headers=headers_kai, data=datas_kai, timeout=10)
         
         ku = ('{"account_created": false, "errors": {"email": [{"message": "Too many accounts are using a@gmail.com.", "code": "email_sharing_limit"}], "__all__": [{"message": "Create a password at least 6 characters long.", "code": "too_short_password"}]}, "dryrun_passed": false, "username_suggestions": [], "status": "ok", "error_type": "form_validation_error"}')
@@ -238,7 +229,7 @@ def check_ig_username():
             with open("ig_stock.txt", 'a', encoding='utf-8') as f: f.write(f'{ks}\n')
         else:
             with lock: bad += 1
-    except Exception as e:
+    except: 
         with lock: bad += 1
 
 def ig_worker():
@@ -447,53 +438,88 @@ def admin_stop(message):
     IG_STOP_FLAG.set(); ig_running = False
     send_with_fire(message.chat.id, "🛑 تم الإيقاف.")
 
+# ================== إصلاح إنشاء الكود (بالأزرار) ==================
 @bot.message_handler(func=lambda message: is_admin(message.from_user.id) and message.text == "💳 إنشاء كود")
-def create_code_start(message):
-    msg = send_with_fire(message.chat.id, "💳 أرسل عدد النقاط للكود (مثال: 10):")
-    bot.register_next_step_handler(msg, create_code_amount)
+def create_code_menu(message):
+    admin_states[message.from_user.id] = {"step": "amount"}
+    markup = types.InlineKeyboardMarkup(row_width=3)
+    markup.add(
+        types.InlineKeyboardButton("1", callback_data="code_amt_1"),
+        types.InlineKeyboardButton("5", callback_data="code_amt_5"),
+        types.InlineKeyboardButton("10", callback_data="code_amt_10"),
+        types.InlineKeyboardButton("50", callback_data="code_amt_50"),
+        types.InlineKeyboardButton("100", callback_data="code_amt_100"),
+        types.InlineKeyboardButton("500", callback_data="code_amt_500")
+    )
+    send_with_fire(message.chat.id, "💳 <b>الخطوة 1:</b> اختر عدد النقاط للكود:", markup)
 
-def create_code_amount(message):
-    try:
-        amount = int(message.text.strip())
-        if amount <= 0: raise ValueError
-        admin_states[message.from_user.id] = {"amount": amount}
-        msg = send_with_fire(message.chat.id, "👥 كم شخص يقدر يستخدم الكود؟ (مثال: 1 لشخص واحد، 0 لعدد لا نهائي):")
-        bot.register_next_step_handler(msg, create_code_uses)
-    except:
-        send_with_fire(message.chat.id, "❌ رقم غير صحيح.")
+@bot.callback_query_handler(func=lambda call: call.data.startswith("code_amt_"))
+def code_amount_selected(call):
+    amount = int(call.data.split("_")[2])
+    admin_states[call.from_user.id] = {"step": "uses", "amount": amount}
+    markup = types.InlineKeyboardMarkup(row_width=3)
+    markup.add(
+        types.InlineKeyboardButton("1 شخص", callback_data="code_use_1"),
+        types.InlineKeyboardButton("5 أشخاص", callback_data="code_use_5"),
+        types.InlineKeyboardButton("10 أشخاص", callback_data="code_use_10"),
+        types.InlineKeyboardButton("لا نهائي", callback_data="code_use_0")
+    )
+    bot.edit_message_text(f"💳 <b>الخطوة 2:</b> الكود قيمته {amount} نقطة.\nكم شخص يقدر يستخدمه؟", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
 
-def create_code_uses(message):
-    try:
-        uses = int(message.text.strip())
-        if uses < 0: raise ValueError
-        admin_states[message.from_user.id]["uses"] = uses
-        code = f"MEHDI-{''.join(random.choices(string.ascii_uppercase + string.digits, k=8))}"
-        
-        codes[code] = {"amount": admin_states[message.from_user.id]["amount"], "max_uses": uses, "used_count": 0, "used_by": []}
-        save_db()
-        
-        text = f"✅ <b>تم إنشاء الكود!</b>\n\n💳 الكود: <code>{code}</code>\n💰 النقاط: {admin_states[message.from_user.id]['amount']}\n👥 الاستخدامات: {uses if uses > 0 else 'لا نهائي'}"
-        send_with_fire(message.chat.id, text)
-        del admin_states[message.from_user.id]
-    except:
-        send_with_fire(message.chat.id, "❌ رقم غير صحيح.")
+@bot.callback_query_handler(func=lambda call: call.data.startswith("code_use_"))
+def code_uses_selected(call):
+    uses = int(call.data.split("_")[2])
+    state = admin_states.get(call.from_user.id)
+    if not state or state.get("step") != "uses": return
+    
+    amount = state["amount"]
+    code = f"MEHDI-{''.join(random.choices(string.ascii_uppercase + string.digits, k=8))}"
+    codes[code] = {"amount": amount, "max_uses": uses, "used_count": 0, "used_by": []}
+    save_db()
+    del admin_states[call.from_user.id]
+    
+    text = f"✅ <b>تم إنشاء الكود!</b>\n\n💳 الكود: <code>{code}</code>\n💰 النقاط: {amount}\n👥 الاستخدامات: {uses if uses > 0 else 'لا نهائي'}"
+    bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode="HTML")
 
+# ================== إصلاح إضافة النقاط (بالأزرار) ==================
 @bot.message_handler(func=lambda message: is_admin(message.from_user.id) and message.text == "💰 إضافة نقاط")
-def admin_add_points(message):
-    msg = send_with_fire(message.chat.id, "💰 أرسل (الآيدي) و (عدد النقاط) مفصولين بمسافة.\nمثال: `7075895496 50`")
-    bot.register_next_step_handler(msg, admin_add_points_process)
+def add_points_menu(message):
+    admin_states[message.from_user.id] = {"step": "add_points_user"}
+    msg = send_with_fire(message.chat.id, "💰 أرسل <b>آيدي</b> الشخص اللي تبي تضيف له نقاط (مثال: 7075895496):")
+    bot.register_next_step_handler(msg, add_points_user_step)
 
-def admin_add_points_process(message):
+def add_points_user_step(message):
     try:
-        parts = message.text.split()
-        uid, amount = parts[0], int(parts[1])
-        add_points(uid, amount, "admin_add")
-        send_with_fire(message.chat.id, f"✅ تم إضافة {amount} نقطة للآيدي {uid}.")
-        try: send_with_fire(uid, f"🎁 تم إضافة {amount} نقطة لحسابك من قبل الإدارة.")
-        except: pass
+        user_id = message.text.strip()
+        admin_states[message.from_user.id] = {"step": "add_points_amount", "target": user_id}
+        markup = types.InlineKeyboardMarkup(row_width=3)
+        markup.add(
+            types.InlineKeyboardButton("1", callback_data="add_pt_1"),
+            types.InlineKeyboardButton("5", callback_data="add_pt_5"),
+            types.InlineKeyboardButton("10", callback_data="add_pt_10"),
+            types.InlineKeyboardButton("50", callback_data="add_pt_50"),
+            types.InlineKeyboardButton("100", callback_data="add_pt_100"),
+            types.InlineKeyboardButton("500", callback_data="add_pt_500")
+        )
+        send_with_fire(message.chat.id, f"💰 اختر عدد النقاط اللي تبي تضيفها لـ <code>{user_id}</code>:", markup)
     except:
-        send_with_fire(message.chat.id, "❌ الصيغة غير صحيحة.")
+        send_with_fire(message.chat.id, "❌ آيدي غير صحيح.")
 
+@bot.callback_query_handler(func=lambda call: call.data.startswith("add_pt_"))
+def add_points_execute(call):
+    amount = int(call.data.split("_")[2])
+    state = admin_states.get(call.from_user.id)
+    if not state or state.get("step") != "add_points_amount": return
+    
+    target = state["target"]
+    add_points(target, amount, "admin_add")
+    del admin_states[call.from_user.id]
+    
+    bot.edit_message_text(f"✅ تم إضافة <b>{amount}</b> نقطة للآيدي <code>{target}</code>.", call.message.chat.id, call.message.message_id, parse_mode="HTML")
+    try: send_with_fire(target, f"🎁 تم إضافة {amount} نقطة لحسابك من قبل الإدارة.")
+    except: pass
+
+# ================== أوامر الأدمن المتبقية ==================
 @bot.message_handler(func=lambda message: is_admin(message.from_user.id) and message.text == "📢 إذاعة")
 def admin_broadcast_start(message):
     msg = send_with_fire(message.chat.id, "📢 أرسل الرسالة الآن (نص، صورة، ملف..):")

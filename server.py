@@ -53,7 +53,7 @@ ig_running = False
 STOP_FLAG = threading.Event()
 IG_STOP_FLAG = threading.Event()
 lock = threading.Lock()
-admin_states = {} 
+admin_states = {} # لتخزين حالة الأدمن
 
 app = Flask(__name__)
 
@@ -383,27 +383,6 @@ def top_users(message):
 def bot_info(message):
     send_with_fire(message.chat.id, f"🤖 بوت Car Parking\n👨‍💻 المطور: {ADMIN_USERNAME}\n⚡ السرعة: {THREADS}")
 
-@bot.message_handler(func=lambda message: message.text == "💳 استلام كود")
-def redeem_code_start(message):
-    msg = send_with_fire(message.chat.id, "💳 أرسل كود الشحن الآن:")
-    bot.register_next_step_handler(msg, redeem_code_process)
-
-def redeem_code_process(message):
-    code = message.text.strip().upper()
-    if code in codes:
-        c = codes[code]
-        if c["used_count"] >= c["max_uses"] and c["max_uses"] != 0:
-            return send_with_fire(message.chat.id, "❌ هذا الكود استنفذ عدد استخداماته.")
-        if str(message.from_user.id) in c["used_by"]:
-            return send_with_fire(message.chat.id, "❌ لقد استخدمت هذا الكود مسبقاً.")
-        add_points(message.from_user.id, c["amount"], "redeem_code")
-        c["used_count"] += 1
-        c["used_by"].append(str(message.from_user.id))
-        save_db()
-        send_with_fire(message.chat.id, f"✅ <b>مبروك!</b> تم شحن <b>{c['amount']} نقطة</b> لحسابك.")
-    else:
-        send_with_fire(message.chat.id, "❌ الكود غير صحيح.")
-
 # ================== أوامر الأدمن ==================
 @bot.message_handler(func=lambda message: message.text == "👑 لوحة الأدمن")
 def admin_panel(message):
@@ -438,10 +417,9 @@ def admin_stop(message):
     IG_STOP_FLAG.set(); ig_running = False
     send_with_fire(message.chat.id, "🛑 تم الإيقاف.")
 
-# ================== إصلاح إنشاء الكود (بالأزرار) ==================
 @bot.message_handler(func=lambda message: is_admin(message.from_user.id) and message.text == "💳 إنشاء كود")
 def create_code_menu(message):
-    admin_states[message.from_user.id] = {"step": "amount"}
+    admin_states[message.from_user.id] = {"step": "code_amount"}
     markup = types.InlineKeyboardMarkup(row_width=3)
     markup.add(
         types.InlineKeyboardButton("1", callback_data="code_amt_1"),
@@ -456,7 +434,7 @@ def create_code_menu(message):
 @bot.callback_query_handler(func=lambda call: call.data.startswith("code_amt_"))
 def code_amount_selected(call):
     amount = int(call.data.split("_")[2])
-    admin_states[call.from_user.id] = {"step": "uses", "amount": amount}
+    admin_states[call.from_user.id] = {"step": "code_uses", "amount": amount}
     markup = types.InlineKeyboardMarkup(row_width=3)
     markup.add(
         types.InlineKeyboardButton("1 شخص", callback_data="code_use_1"),
@@ -470,7 +448,7 @@ def code_amount_selected(call):
 def code_uses_selected(call):
     uses = int(call.data.split("_")[2])
     state = admin_states.get(call.from_user.id)
-    if not state or state.get("step") != "uses": return
+    if not state or state.get("step") != "code_uses": return
     
     amount = state["amount"]
     code = f"MEHDI-{''.join(random.choices(string.ascii_uppercase + string.digits, k=8))}"
@@ -481,29 +459,30 @@ def code_uses_selected(call):
     text = f"✅ <b>تم إنشاء الكود!</b>\n\n💳 الكود: <code>{code}</code>\n💰 النقاط: {amount}\n👥 الاستخدامات: {uses if uses > 0 else 'لا نهائي'}"
     bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode="HTML")
 
-# ================== إصلاح إضافة النقاط (بالأزرار) ==================
+# ================== إضافة نقاط (State Machine) ==================
 @bot.message_handler(func=lambda message: is_admin(message.from_user.id) and message.text == "💰 إضافة نقاط")
 def add_points_menu(message):
-    admin_states[message.from_user.id] = {"step": "add_points_user"}
-    msg = send_with_fire(message.chat.id, "💰 أرسل <b>آيدي</b> الشخص اللي تبي تضيف له نقاط (مثال: 7075895496):")
-    bot.register_next_step_handler(msg, add_points_user_step)
+    admin_states[message.from_user.id] = {"step": "add_points_id"}
+    send_with_fire(message.chat.id, "💰 أرسل <b>آيدي</b> الشخص اللي تبي تضيف له نقاط (مثال: 7075895496):")
 
-def add_points_user_step(message):
-    try:
-        user_id = message.text.strip()
-        admin_states[message.from_user.id] = {"step": "add_points_amount", "target": user_id}
-        markup = types.InlineKeyboardMarkup(row_width=3)
-        markup.add(
-            types.InlineKeyboardButton("1", callback_data="add_pt_1"),
-            types.InlineKeyboardButton("5", callback_data="add_pt_5"),
-            types.InlineKeyboardButton("10", callback_data="add_pt_10"),
-            types.InlineKeyboardButton("50", callback_data="add_pt_50"),
-            types.InlineKeyboardButton("100", callback_data="add_pt_100"),
-            types.InlineKeyboardButton("500", callback_data="add_pt_500")
-        )
-        send_with_fire(message.chat.id, f"💰 اختر عدد النقاط اللي تبي تضيفها لـ <code>{user_id}</code>:", markup)
-    except:
-        send_with_fire(message.chat.id, "❌ آيدي غير صحيح.")
+# التقاط رد الآيدي
+@bot.message_handler(func=lambda message: is_admin(message.from_user.id) and admin_states.get(message.from_user.id, {}).get("step") == "add_points_id")
+def add_points_id_step(message):
+    user_id = message.text.strip()
+    if not user_id.isdigit():
+        return send_with_fire(message.chat.id, "❌ آيدي غير صحيح، أرسل أرقام فقط.")
+    
+    admin_states[message.from_user.id] = {"step": "add_points_amount", "target": user_id}
+    markup = types.InlineKeyboardMarkup(row_width=3)
+    markup.add(
+        types.InlineKeyboardButton("1", callback_data="add_pt_1"),
+        types.InlineKeyboardButton("5", callback_data="add_pt_5"),
+        types.InlineKeyboardButton("10", callback_data="add_pt_10"),
+        types.InlineKeyboardButton("50", callback_data="add_pt_50"),
+        types.InlineKeyboardButton("100", callback_data="add_pt_100"),
+        types.InlineKeyboardButton("500", callback_data="add_pt_500")
+    )
+    send_with_fire(message.chat.id, f"💰 اختر عدد النقاط اللي تبي تضيفها لـ <code>{user_id}</code>:", markup)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("add_pt_"))
 def add_points_execute(call):
@@ -519,13 +498,15 @@ def add_points_execute(call):
     try: send_with_fire(target, f"🎁 تم إضافة {amount} نقطة لحسابك من قبل الإدارة.")
     except: pass
 
-# ================== أوامر الأدمن المتبقية ==================
+# ================== باقي أوامر الأدمن ==================
 @bot.message_handler(func=lambda message: is_admin(message.from_user.id) and message.text == "📢 إذاعة")
 def admin_broadcast_start(message):
-    msg = send_with_fire(message.chat.id, "📢 أرسل الرسالة الآن (نص، صورة، ملف..):")
-    bot.register_next_step_handler(msg, admin_broadcast_send)
+    admin_states[message.from_user.id] = {"step": "broadcast"}
+    send_with_fire(message.chat.id, "📢 أرسل الرسالة الآن (نص، صورة، ملف..):")
 
+@bot.message_handler(func=lambda message: is_admin(message.from_user.id) and admin_states.get(message.from_user.id, {}).get("step") == "broadcast")
 def admin_broadcast_send(message):
+    del admin_states[message.from_user.id]
     send_with_fire(message.chat.id, "⏳ جاري الإرسال للجميع...")
     count = 0
     failed = 0
@@ -603,6 +584,31 @@ def unban_user(message):
             save_db()
             send_with_fire(message.chat.id, f"✅ تم إلغاء حظر {uid}.")
     except: send_with_fire(message.chat.id, "❌ خطأ.")
+
+# ================== استلام كود (State Machine) ==================
+@bot.message_handler(func=lambda message: message.text == "💳 استلام كود")
+def redeem_code_start(message):
+    admin_states[message.from_user.id] = {"step": "redeem"}
+    send_with_fire(message.chat.id, "💳 أرسل كود الشحن الآن:")
+
+@bot.message_handler(func=lambda message: admin_states.get(message.from_user.id, {}).get("step") == "redeem")
+def redeem_code_process(message):
+    code = message.text.strip().upper()
+    del admin_states[message.from_user.id]
+    
+    if code in codes:
+        c = codes[code]
+        if c["used_count"] >= c["max_uses"] and c["max_uses"] != 0:
+            return send_with_fire(message.chat.id, "❌ هذا الكود استنفذ عدد استخداماته.")
+        if str(message.from_user.id) in c["used_by"]:
+            return send_with_fire(message.chat.id, "❌ لقد استخدمت هذا الكود مسبقاً.")
+        add_points(message.from_user.id, c["amount"], "redeem_code")
+        c["used_count"] += 1
+        c["used_by"].append(str(message.from_user.id))
+        save_db()
+        send_with_fire(message.chat.id, f"✅ <b>مبروك!</b> تم شحن <b>{c['amount']} نقطة</b> لحسابك.")
+    else:
+        send_with_fire(message.chat.id, "❌ الكود غير صحيح.")
 
 @bot.callback_query_handler(func=lambda call: call.data == "check_sub")
 def check_sub_cb(call):

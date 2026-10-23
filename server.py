@@ -1,4 +1,6 @@
 import os
+import re
+import json
 import time
 import threading
 from queue import Queue, Empty
@@ -12,10 +14,12 @@ app = Flask(__name__)
 app.config["SECRET_KEY"] = os.urandom(24).hex()
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 
-# الإعدادات المسبقة (تقدر تغيرها من هنا مباشرة)
-BOT_TOKEN = ""  # حط التوكن هنا
-CHAT_ID = ""    # حط الايدي هنا
-WORKERS = 20    # عدد الثريدات
+# ==========================================
+# الإعدادات (تقدر تغيرها)
+# ==========================================
+BOT_TOKEN = ""  # حط توكن البوت هنا
+CHAT_ID = ""    # حط الايدي حقك هنا
+WORKERS = 20    # عدد الثريدات (خله 20 أو 30)
 
 STATE = {
     "running": False,
@@ -141,18 +145,21 @@ INDEX_HTML = r"""<!doctype html>
   body { margin:0; background:var(--bg); color:var(--fg); font-family:"Courier New",monospace; }
   .wrap { max-width:800px; margin:0 auto; padding:20px; }
   h1 { font-size:18px; text-align:center; margin-bottom:20px; }
-  .btn-start {
-    display:block; width:100%; padding:15px; font-size:18px; font-weight:bold;
-    background:var(--fg); color:#000; border:none; cursor:pointer;
-    text-align:center; border-radius:5px; margin-bottom:20px;
+  
+  .upload-box {
+    border: 2px dashed var(--fg); padding: 40px 20px; text-align: center;
+    border-radius: 8px; margin-bottom: 20px; cursor: pointer; transition: 0.3s;
   }
-  .btn-start:disabled { background:#333; color:#666; cursor:not-allowed; }
+  .upload-box:hover { background: rgba(57, 255, 20, 0.1); }
+  .upload-box input[type="file"] { display: none; }
+  .upload-box span { font-size: 16px; pointer-events: none; display: block; }
+  
   .stats { display:grid; grid-template-columns:repeat(2,1fr); gap:10px; margin-bottom:20px; }
   .stat { border:1px solid var(--dim); padding:10px; text-align:center; border-radius:5px; }
-  .stat b { display:block; font-size:20px; margin-top:5px; }
+  .stat b { display:block; font-size:22px; margin-top:5px; }
   .term {
     background:#000; border:1px solid var(--dim); padding:10px;
-    height:400px; overflow-y:auto; font-size:13px; line-height:1.5;
+    height:350px; overflow-y:auto; font-size:13px; line-height:1.5;
     white-space:pre-wrap; word-break:break-all; border-radius:5px;
   }
   .hit { color:var(--fg); font-weight:bold; }
@@ -163,7 +170,10 @@ INDEX_HTML = r"""<!doctype html>
 <div class="wrap">
   <h1>▶ RBX CHECKER</h1>
   
-  <button id="start" class="btn-start">▶ ابدأ الصيد (START)</button>
+  <label class="upload-box" id="drop-zone">
+    <input type="file" id="file-input" accept=".txt">
+    <span id="upload-text">📁 اضغط هنا أو اسحب ملف الكومبو (results_roblox.txt)</span>
+  </label>
 
   <div class="stats">
     <div class="stat">الصيد (Hits) <b id="s-hits">0</b></div>
@@ -172,20 +182,52 @@ INDEX_HTML = r"""<!doctype html>
     <div class="stat">المعالج (Processed) <b id="s-proc">0</b></div>
   </div>
 
-  <div class="term" id="term">> بانتظار أمر البدء...<br>> سيقوم النظام بقراءة الملف تلقائياً عند الضغط على START.</div>
+  <div class="term" id="term">> بانتظار الملف...<br>> سيبدأ الفحص تلقائياً بمجرد رفع الملف.</div>
 </div>
 
 <script>
 const socket = io();
 const term = document.getElementById("term");
+const fileInput = document.getElementById("file-input");
+const uploadText = document.getElementById("upload-text");
 
 function append(cls, text) {
-  const div = document.createElement("div");
+  const div = document(".createElement("div");
   div.className = cls;
-  div.textContent = text;
+  div.textContent =bad text;
   term.appendChild(div);
-  term.scrollTop = term.scrollHeight;
+  term.scroll",Top = term.scrollHeight;
 }
+
+fileInput.addEventListener("change "", async (e) => {
+  const file = e.target.files!![0];
+  if (!file) return;
+  
+  uploadText.textContent = "⏳ جاري قراءة الملف...";
+  append("", `> تم اختيار الملف: ${file.name}`);
+  
+  const text = await file.text();
+  const lines = text.split("\n").map(l => l.trim()).filter(l => l.includes(":"));
+  
+  if (lines.length === 0) {
+    append الملف فاضي أو ما فيه صيغة صحيحة (user:pass)");
+    uploadText.textContent = "📁 اضغط هنا أو اسحب ملف الكومبو (results_roblox.txt)";
+    return;
+  }
+
+  uploadText.textContent = "✅ تم التحميل! جاري بدء الفحص...";
+  
+  const r = await fetch("/api/start", { 
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({ combos: lines })
+  });
+  
+  const j = await r.json();
+  if (!j.ok) {
+    append("bad", "!! خطأ: " + j.error);
+  }
+});
 
 socket.on("log", d => {
   let cls = "";
@@ -200,25 +242,9 @@ socket.on("stats", s => {
   document.getElementById("s-bad").textContent = s.bad;
   document.getElementById("s-proc").textContent = s.processed;
   if (s.processed >= s.total && s.total > 0) {
-    document.getElementById("start").disabled = false;
-    document.getElementById("start").textContent = "▶ ابدأ الصيد (START)";
+    uploadText.textContent = "✅ خلص الفحص! تقدر ترفع ملف جديد.";
   }
 });
-
-document.getElementById("start").onclick = async () => {
-  const btn = document.getElementById("start");
-  btn.disabled = true;
-  btn.textContent = "جاري المعالجة...";
-  append("", "> جاري قراءة الملف وبدء الفحص...");
-  
-  const r = await fetch("/api/start", { method: "POST" });
-  const j = await r.json();
-  if (!j.ok) {
-    append("bad", "!! خطأ: " + j.error);
-    btn.disabled = false;
-    btn.textContent = "▶ ابدأ الصيد (START)";
-  }
-};
 </script>
 </body>
 </html>
@@ -231,16 +257,13 @@ def index():
 @app.route("/api/start", methods=["POST"])
 def api_start():
     if STATE["running"]:
-        return jsonify({"ok": False, "error": "شغال من قبل"}), 400
+        return jsonify({"ok": False, "error": "الفحص شغال حالياً، انتظر يخلص"}), 400
         
-    try:
-        with open("results_roblox.txt", "r", encoding="utf-8", errors="ignore") as f:
-            combos = [line.strip() for line in f if ":" in line]
-    except Exception as e:
-        return jsonify({"ok": False, "error": f"ما لقى الملف results_roblox.txt: {str(e)}"}), 500
-        
+    data = request.get_json(force=True)
+    combos = data.get("combos", [])
+    
     if not combos:
-        return jsonify({"ok": False, "error": "الملف فاضي أو مافي كومبو صحيح"}), 400
+        return jsonify({"ok": False, "error": "ما وصلت بيانات من الملف"}), 400
 
     threading.Thread(target=run_checker, args=(combos,), daemon=True).start()
     return jsonify({"ok": True})

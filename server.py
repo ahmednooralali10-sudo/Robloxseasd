@@ -13,8 +13,6 @@ from telebot import types
 BOT_TOKEN = "8730263970:AAHTcWNLwUOCBnXWsPbG_vho68cGEoFZy4M"
 BOT_USERNAME = "@VISITTTTTBOT"
 BOT_LINK = f"https://t.me/{BOT_USERNAME.replace('@', '')}"
-
-# المشرفين
 ADMINS = ["7075895496"]
 
 # ================== Flask ==================
@@ -59,7 +57,6 @@ def save_db():
 
 db = load_db()
 admin_states = {}
-user_states = {}
 
 # ================== دوال مساعدة ==================
 def is_admin(u): return str(u) in ADMINS
@@ -80,6 +77,7 @@ def get_admin_kb():
     m.add("⚙️ القنوات", "📊 الإحصائيات")
     m.add("🚫 الحظر", "🛠️ الإعدادات")
     m.add("💾 نسخ احتياطي", "📜 السجل")
+    m.add("🔙 إلغاء العملية الحالية")
     return m
 
 def log_action(action, user_id, details=""):
@@ -100,6 +98,13 @@ def track_groups(message: types.ChatMemberUpdated):
                     save_db()
     except: pass
 
+# ================== زر الإلغاء ==================
+@bot.message_handler(func=lambda m: is_admin(m.from_user.id) and m.text == "🔙 إلغاء العملية الحالية")
+def cancel_state(m):
+    if m.from_user.id in admin_states:
+        del admin_states[m.from_user.id]
+    bot.send_message(m.chat.id, "✅ تم إلغاء العملية الحالية.", reply_markup=get_admin_kb())
+
 # ================== أوامر المستخدم ==================
 @bot.message_handler(commands=['start'])
 def start_cmd(message):
@@ -116,7 +121,7 @@ def start_cmd(message):
         except: pass
 
     if is_admin(uid):
-        return bot.send_message(message.chat.id, f"👑 أهلاً بك في لوحة تحكم الإدارة.\nالبوت شغال بكامل طاقته.", reply_markup=get_admin_kb())
+        return bot.send_message(message.chat.id, f"👑 أهلاً بك في لوحة تحكم الإدارة.", reply_markup=get_admin_kb())
     
     args = message.text.split()
     if len(args) > 1:
@@ -141,7 +146,6 @@ def send_file(chat_id, fid):
     if not f: return
     try: 
         m = types.InlineKeyboardMarkup(row_width=2)
-        
         btn1 = db["settings"]["btn1_text"]
         btn2 = db["settings"]["btn2_text"]
         
@@ -173,24 +177,32 @@ def add_single_start(m):
 
 @bot.message_handler(func=lambda m: is_admin(m.from_user.id) and admin_states.get(m.from_user.id, {}).get("step") == "single_desc", content_types=['text'])
 def add_single_desc(m):
+    if m.text == "🔙 إلغاء العملية الحالية": return
     admin_states[m.from_user.id] = {"step": "single_file", "desc": m.text}
     bot.send_message(m.chat.id, "📤 الحين أرسل الملف:")
 
 @bot.message_handler(func=lambda m: is_admin(m.from_user.id) and admin_states.get(m.from_user.id, {}).get("step") == "single_file", content_types=['document', 'video', 'audio', 'photo'])
 def add_single_file(m):
-    fid = str(uuid.uuid4())[:8]
-    name, file_id = "ملف", None
-    if m.content_type == 'document': file_id, name = m.document.file_id, m.document.file_name
-    elif m.content_type == 'video': file_id, name = m.video.file_id, "فيديو.mp4"
-    elif m.content_type == 'audio': file_id, name = m.audio.file_id, "صوت.mp3"
-    elif m.content_type == 'photo': file_id, name = m.photo[-1].file_id, "صورة.jpg"
-    
-    desc = admin_states[m.from_user.id]["desc"]
-    db["files"][fid] = {"file_id": file_id, "name": name, "desc": desc, "date": datetime.now().strftime("%Y-%m-%d"), "downloads": 0}
-    save_db()
-    
-    del admin_states[m.from_user.id]
-    bot.send_message(m.chat.id, f"✅ تم الرفع!\nالرابط:\n<code>{BOT_LINK}?start={fid}</code>", parse_mode="HTML")
+    try:
+        fid = str(uuid.uuid4())[:8]
+        name, file_id = "ملف", None
+        if m.content_type == 'document': file_id, name = m.document.file_id, m.document.file_name or "ملف.zip"
+        elif m.content_type == 'video': file_id, name = m.video.file_id, "فيديو.mp4"
+        elif m.content_type == 'audio': file_id, name = m.audio.file_id, "صوت.mp3"
+        elif m.content_type == 'photo': file_id, name = m.photo[-1].file_id, "صورة.jpg"
+        
+        if not file_id:
+            return bot.send_message(m.chat.id, "❌ حدث خطأ في قراءة الملف.")
+
+        desc = admin_states[m.from_user.id]["desc"]
+        db["files"][fid] = {"file_id": file_id, "name": name, "desc": desc, "date": datetime.now().strftime("%Y-%m-%d"), "downloads": 0}
+        save_db()
+        
+        del admin_states[m.from_user.id]
+        bot.send_message(m.chat.id, f"✅ <b>تم الرفع بنجاح!</b>\n\n📄 الاسم: {name}\n🔗 الرابط:\n<code>{BOT_LINK}?start={fid}</code>", parse_mode="HTML")
+    except Exception as e:
+        bot.send_message(m.chat.id, f"❌ خطأ: {e}\nتأكد أنك تستخدم الأزرار بالشكل الصحيح.")
+        if m.from_user.id in admin_states: del admin_states[m.from_user.id]
 
 # ================== رفع ملفات متعددة ==================
 @bot.message_handler(func=lambda m: is_admin(m.from_user.id) and m.text == "📦 رفع ملفات متعددة")
@@ -200,23 +212,29 @@ def add_batch_start(m):
 
 @bot.message_handler(func=lambda m: is_admin(m.from_user.id) and admin_states.get(m.from_user.id, {}).get("step") == "batch_desc", content_types=['text'])
 def add_batch_desc(m):
+    if m.text == "🔙 إلغاء العملية الحالية": return
     admin_states[m.from_user.id] = {"step": "batch_files", "desc": m.text, "count": 0}
     bot.send_message(m.chat.id, "📤 الحين أرسل الملفات (واحد ورا الثاني).\nلما تخلص، اضغط /done")
 
 @bot.message_handler(func=lambda m: is_admin(m.from_user.id) and admin_states.get(m.from_user.id, {}).get("step") == "batch_files", content_types=['document', 'video', 'audio', 'photo'])
 def add_batch_files(m):
-    fid = str(uuid.uuid4())[:8]
-    name, file_id = "ملف", None
-    if m.content_type == 'document': file_id, name = m.document.file_id, m.document.file_name
-    elif m.content_type == 'video': file_id, name = m.video.file_id, "فيديو.mp4"
-    elif m.content_type == 'audio': file_id, name = m.audio.file_id, "صوت.mp3"
-    elif m.content_type == 'photo': file_id, name = m.photo[-1].file_id, "صورة.jpg"
-    
-    desc = admin_states[m.from_user.id]["desc"]
-    db["files"][fid] = {"file_id": file_id, "name": name, "desc": desc, "date": datetime.now().strftime("%Y-%m-%d"), "downloads": 0}
-    save_db()
-    admin_states[m.from_user.id]["count"] += 1
-    bot.send_message(m.chat.id, f"✅ {name} تمت إضافته ({admin_states[m.from_user.id]['count']}).")
+    try:
+        fid = str(uuid.uuid4())[:8]
+        name, file_id = "ملف", None
+        if m.content_type == 'document': file_id, name = m.document.file_id, m.document.file_name or "ملف.zip"
+        elif m.content_type == 'video': file_id, name = m.video.file_id, "فيديو.mp4"
+        elif m.content_type == 'audio': file_id, name = m.audio.file_id, "صوت.mp3"
+        elif m.content_type == 'photo': file_id, name = m.photo[-1].file_id, "صورة.jpg"
+        
+        desc = admin_states[m.from_user.id]["desc"]
+        db["files"][fid] = {"file_id": file_id, "name": name, "desc": desc, "date": datetime.now().strftime("%Y-%m-%d"), "downloads": 0}
+        save_db()
+        
+        admin_states[m.from_user.id]["count"] += 1
+        bot.send_message(m.chat.id, f"✅ {name} تمت إضافته ({admin_states[m.from_user.id]['count']}).")
+    except Exception as e:
+        bot.send_message(m.chat.id, f"❌ خطأ في الرفع، جرب مرة ثانية أو أرسل /done للإنهاء.")
+        if m.from_user.id in admin_states: del admin_states[m.from_user.id]
 
 @bot.message_handler(commands=['done'])
 def done_adding(m):
@@ -471,6 +489,11 @@ def logs(m):
         with open("logs.txt") as f: lines = f.readlines()[-20:]
         bot.send_message(m.chat.id, "📜 آخر 20 عملية:\n\n<code>" + "".join(lines) + "</code>", parse_mode="HTML")
     except: bot.send_message(m.chat.id, "❌ لا يوجد سجل.")
+
+# ================== رسائل غير مفهومة (حماية) ==================
+@bot.message_handler(func=lambda m: is_admin(m.from_user.id), content_types=['document', 'video', 'audio', 'photo'])
+def catch_orphan_files(m):
+    bot.send_message(m.chat.id, "⚠️ يرجى اختيار نوع الرفع أولاً من الأزرار:\n- 📤 رفع ملف واحد\n- 📦 رفع ملفات متعددة")
 
 # ================== التشغيل ==================
 def start_polling():

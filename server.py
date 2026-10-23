@@ -63,19 +63,14 @@ IG_STOP_FLAG = threading.Event()
 lock = threading.Lock()
 admin_states = {} 
 
-# ================== Flask ==================
+# ================== Flask (مهم جداً لـ Render) ==================
 app = Flask(__name__)
 
 @app.route("/")
 def index():
-    return "Mehdi's Bot - System Online"
+    return "Mehdi's Bot - System is Online and Running!"
 
-def keep_alive():
-    def run():
-        try: app.run(host="0.0.0.0", port=10000, debug=False)
-        except: pass
-    threading.Thread(target=run, daemon=True).start()
-
+# ================== البوت ==================
 bot = telebot.TeleBot(BOT_TOKEN)
 
 # ================== دوال مساعدة ==================
@@ -587,10 +582,25 @@ def check_sub_cb(call):
     if check_forced_sub(call.message): bot.send_message(call.from_user.id, "✅ تم التحقق! أرسل /start.")
     else: bot.answer_callback_query(call.id, "❌ لم تشترك بعد.", show_alert=True)
 
-# ================== تشغيل ==================
+# ================== تشغيل (الطريقة الجديدة لـ Render) ==================
+def start_bot_polling():
+    # حلقة لا نهائية لضمان عدم طفو البوت
+    while True:
+        try:
+            logging.info("Bot polling started...")
+            bot.infinity_polling(timeout=60, long_polling_timeout=60)
+        except Exception as e:
+            logging.error(f"Polling crashed: {e}")
+            time.sleep(5)
+
 if __name__ == "__main__":
     for f in ["stock.txt", "ig_stock.txt"]:
         if not os.path.exists(f): open(f, 'w').close()
             
-    keep_alive()
-    logging.info("Bot Started")
+    # تشغيل البوت في الخلفية عشان Flask يمسك السيرفر
+    bot_thread = threading.Thread(target=start_bot_polling, daemon=True)
+    bot_thread.start()
+    
+    # تشغيل Flask (عشان Render ما يطفي السيرفر)
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)

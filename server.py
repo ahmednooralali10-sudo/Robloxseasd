@@ -11,8 +11,8 @@ import telebot
 from telebot import types
 
 # ========== إعدادات ثابتة ==========
-TOKEN = "8638828289:AAECoBsql6F-uY4sk7NUQvBURi6ajfqvXJ8"
-CHAT_ID = "7200921345"  # الآيدي حقك
+TOKEN = "8807194549:AAGcUNewT82vYW7rxdngAdSYOTlvCvYUOo8"
+CHAT_ID = "7075895496"  # الآيدي حقك
 TARGET_FILE = "SHMRI-OLD-OK.txt"
 
 # ========== Flask للسيرفر ==========
@@ -130,7 +130,6 @@ def login_attempt(uid):
                 break
                 
         loop_counter += 1
-        # تحديث حالة البوت كل 100 محاولة
         if loop_counter % 100 == 0:
             bot.send_message(CHAT_ID, f"🔄 جاري الفحص...\nتم فحص: {loop_counter} حساب\nالصيد: {len(ok_list)}")
             
@@ -139,7 +138,7 @@ def login_attempt(uid):
 
 # ========== دوال التشغيل ==========
 def run_checker(limit, mode):
-    global loop_counter, ok_list
+    global running, loop_counter, ok_list
     running = True
     STOP_FLAG.clear()
     loop_counter = 0
@@ -170,6 +169,7 @@ def run_checker(limit, mode):
         for uid in user:
             pool.submit(login_attempt, uid)
             
+    running = False
     bot.send_message(CHAT_ID, f"🏁 انتهى الصيد!\nتم فحص: {loop_counter}\nالصيد: {len(ok_list)}")
 
 # ========== أوامر البوت ==========
@@ -204,7 +204,7 @@ def start_task(message, mode):
         if limit <= 0: raise ValueError
     except:
         bot.reply_to(message, "❌ رقم غير صحيح، جرب مرة ثانية.")
-        return الأ
+        return
         
     threading.Thread(target=run_checker, args=(limit, mode), daemon=True).start()
 

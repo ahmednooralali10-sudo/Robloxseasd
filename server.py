@@ -19,40 +19,31 @@ ADMIN_ID = "7075895496"
 ADMIN_USERNAME = "@XOREYT"
 THREADS = 150
 BOT_LINK = "https://t.me/Xoregrops_bot"
-MAX_WAIT_TIME = 3600  # مدة الانتظار (ساعة) قبل استرجاع النقاط
+MAX_WAIT_TIME = 3600
+FIRE_EFFECT = 5104841245755180586 # 🎆 تأثير النار
 
 DB_FILE = "database.json"
 
-logging.basicConfig(
-    filename="logs.txt",
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
-
-def log_action(action, user_id, details=""):
-    logging.info(f"ACTION: {action} | USER: {user_id} | DETAILS: {details}")
+logging.basicConfig(filename="logs.txt", level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def load_db():
     if os.path.exists(DB_FILE):
         try:
-            with open(DB_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
+            with open(DB_FILE, 'r', encoding='utf-8') as f: return json.load(f)
         except: pass
-    return {"users": {}, "channels": {}, "banned": [], "codes": {}, "settings": {"daily_gift": 1, "ref_points": 5, "min_cars": 30, "maintenance": False}}
+    return {"users": {}, "channels": {}, "banned": [], "codes": {}, "settings": {"daily_gift": 1, "ref_points": 5, "min_cars": 30}}
 
 def save_db():
     try:
-        with open(DB_FILE, 'w', encoding='utf-8') as f:
-            json.dump(db, f, ensure_ascii=False, indent=4)
-    except Exception as e:
-        logging.error(f"Failed to save DB: {e}")
+        with open(DB_FILE, 'w', encoding='utf-8') as f: json.dump(db, f, ensure_ascii=False, indent=4)
+    except: pass
 
 db = load_db()
 users = db.get("users", {})
 channels = db.get("channels", {})
 banned_users = db.get("banned", [])
 codes = db.get("codes", {})
-settings = db.get("settings", {"daily_gift": 1, "ref_points": 5, "min_cars": 30, "maintenance": False})
+settings = db.get("settings", {"daily_gift": 1, "ref_points": 5, "min_cars": 30})
 
 # ================== الحالة العامة ==================
 good = 0
@@ -93,10 +84,11 @@ def add_points(user_id, amount, reason="unknown"):
     new_level = 1 + (user["total_earned"] // 10)
     if new_level > user["level"]:
         user["level"] = new_level
-        try: bot.send_message(uid, f"🎉 مبروك! لقد وصلت للمستوى {new_level}!")
+        try: 
+            bot.send_message(uid, f"🎉 مبروك! لقد وصلت للمستوى {new_level}!", message_effect_id=FIRE_EFFECT)
         except: pass
     save_db()
-    log_action("ADD_POINTS", uid, f"+{amount} ({reason})")
+    logging.info(f"ADD_POINTS: {uid} +{amount} ({reason})")
 
 def check_forced_sub(message):
     if is_admin(message.from_user.id): return True
@@ -116,7 +108,9 @@ def check_forced_sub(message):
                 markup.add(types.InlineKeyboardButton(text=f"📢 {ch_name}", url=link))
             except: pass
         markup.add(types.InlineKeyboardButton(text="✅ تحقق", callback_data="check_sub"))
-        bot.send_message(message.chat.id, "⚠️ <b>يجب الاشتراك أولاً:</b>", reply_markup=markup, parse_mode="HTML")
+        try:
+            bot.send_message(message.chat.id, "⚠️ <b>يجب الاشتراك أولاً:</b>", reply_markup=markup, parse_mode="HTML", message_effect_id=FIRE_EFFECT)
+        except: pass
         return False
     return True
 
@@ -126,8 +120,7 @@ def get_user_keyboard(user_id):
     markup.add("💎 نقاطي", "🎁 هدية")
     markup.add("🔗 إحالة", "🏆 المتصدرين")
     markup.add("💳 استلام كود", "ℹ️ معلومات")
-    if is_admin(user_id):
-        markup.add("👑 لوحة الأدمن")
+    if is_admin(user_id): markup.add("👑 لوحة الأدمن")
     return markup
 
 def get_admin_keyboard():
@@ -149,8 +142,7 @@ def http_post(url, json_data=None, headers=None, timeout=10):
             for k, v in headers.items(): req.add_header(k, v)
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.status, resp.read().decode('utf-8', errors='ignore')
-    except urllib.error.HTTPError as e:
-        return e.code, e.read().decode('utf-8', errors='ignore')
+    except urllib.error.HTTPError as e: return e.code, e.read().decode('utf-8', errors='ignore')
     except: return 0, ''
 
 def get_car_count(id_token):
@@ -288,7 +280,6 @@ def wait_and_refund(chat_id, msg_id, user_id, cost, file_type, mode_text):
                     bot.edit_message_text(f"✅ <b>تم الصيد بنجاح!</b>\nرجاءً ادخل على المتجر مرة ثانية عشان تستلم طلبك.", chat_id, msg_id, parse_mode="HTML")
                     return
 
-    # استرجاع النقاط
     add_points(user_id, cost, "refund_timeout")
     bot.edit_message_text(
         f"❌ <b>عذراً، لم نجد أي طلب خلال {MAX_WAIT_TIME//60} دقيقة.</b>\n\n"
@@ -299,24 +290,14 @@ def wait_and_refund(chat_id, msg_id, user_id, cost, file_type, mode_text):
 # ================== أوامر البوت العامة ==================
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    if is_banned(message.from_user.id): return bot.reply_to(message, "🚫 محظور.")
+    if is_banned(message.from_user.id): return
     if not check_forced_sub(message): return
-    
     user = get_user(message.from_user.id)
-    ref_id = message.text.split()[1] if len(message.text.split()) > 1 else None
-    if ref_id and ref_id != str(message.from_user.id) and user["referred_by"] is None:
-        try:
-            if ref_id in users:
-                user["referred_by"] = ref_id
-                user["refs"] += 1
-                users[ref_id]["refs"] += 1
-                add_points(ref_id, settings.get("ref_points", 5), "referral")
-                save_db()
-                bot.send_message(int(ref_id), f"🎉 شخص جديد دخل! +{settings.get('ref_points', 5)} نقاط.")
-        except: pass
-
     text = f"👋 <b>أهلاً {message.from_user.first_name}!</b>\n\n💎 نقاطك: {user['points']}\n📈 مستواك: {user['level']}"
-    bot.send_message(message.chat.id, text, reply_markup=get_user_keyboard(message.from_user.id), parse_mode="HTML")
+    try:
+        bot.send_message(message.chat.id, text, reply_markup=get_user_keyboard(message.from_user.id), parse_mode="HTML", message_effect_id=FIRE_EFFECT)
+    except:
+        bot.send_message(message.chat.id, text, reply_markup=get_user_keyboard(message.from_user.id), parse_mode="HTML")
 
 @bot.message_handler(func=lambda message: message.text == "🏪 المتجر")
 def shop(message):
@@ -324,7 +305,10 @@ def shop(message):
     markup = types.InlineKeyboardMarkup(row_width=1)
     markup.add(types.InlineKeyboardButton("🚗 صيدة Car Parking (1 نقطة)", callback_data="buy_1"))
     markup.add(types.InlineKeyboardButton("📦 5 صيدات Car Parking (4 نقاط)", callback_data="buy_5"))
-    bot.send_message(message.chat.id, f"🛒 متجر Car Parking\nرصيدك: {user['points']}", reply_markup=markup)
+    try:
+        bot.send_message(message.chat.id, f"🛒 متجر Car Parking\nرصيدك: {user['points']}", reply_markup=markup, message_effect_id=FIRE_EFFECT)
+    except:
+        bot.send_message(message.chat.id, f"🛒 متجر Car Parking\nرصيدك: {user['points']}", reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("buy_"))
 def buy_hit(call):
@@ -354,7 +338,10 @@ def buy_hit(call):
         user["points"] -= cost
         user["hits_bought"] += amount
         save_db()
-        bot.send_message(call.from_user.id, f"✅ <b>تم الشراء:</b>\n<code>{''.join(bought)}</code>", parse_mode="HTML")
+        try:
+            bot.send_message(call.from_user.id, f"✅ <b>تم الشراء:</b>\n<code>{''.join(bought)}</code>", parse_mode="HTML", message_effect_id=FIRE_EFFECT)
+        except:
+            bot.send_message(call.from_user.id, f"✅ <b>تم الشراء:</b>\n<code>{''.join(bought)}</code>", parse_mode="HTML")
     except Exception as e:
         bot.answer_callback_query(call.id, "⚠️ خطأ.", show_alert=True)
 
@@ -366,7 +353,10 @@ def shop_ig(message):
     markup.add(types.InlineKeyboardButton("📱 رباعي (4 حروف) - 10 نقاط", callback_data="ig_4"))
     markup.add(types.InlineKeyboardButton("📱 شبه ثلاثي - 3 نقاط", callback_data="ig_semi3"))
     markup.add(types.InlineKeyboardButton("📱 شبه رباعي - 7 نقاط", callback_data="ig_semi4"))
-    bot.send_message(message.chat.id, f"📸 متجر إنستقرام\nرصيدك: {user['points']} نقطة\n\nاختر نوع الحساب:", reply_markup=markup)
+    try:
+        bot.send_message(message.chat.id, f"📸 متجر إنستقرام\nرصيدك: {user['points']} نقطة\n\nاختر نوع الحساب:", reply_markup=markup, message_effect_id=FIRE_EFFECT)
+    except:
+        bot.send_message(message.chat.id, f"📸 متجر إنستقرام\nرصيدك: {user['points']} نقطة\n\nاختر نوع الحساب:", reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("ig_"))
 def buy_ig(call):
@@ -393,13 +383,17 @@ def buy_ig(call):
         with open("ig_stock.txt", 'w', encoding='utf-8') as f: f.writelines(lines[1:])
         user["points"] -= cost
         save_db()
-        bot.send_message(call.from_user.id, f"✅ <b>تم الشراء:</b> <code>@{bought}</code>", parse_mode="HTML")
+        try:
+            bot.send_message(call.from_user.id, f"✅ <b>تم الشراء:</b> <code>@{bought}</code>", parse_mode="HTML", message_effect_id=FIRE_EFFECT)
+        except:
+            bot.send_message(call.from_user.id, f"✅ <b>تم الشراء:</b> <code>@{bought}</code>", parse_mode="HTML")
     except: bot.answer_callback_query(call.id, "⚠️ خطأ.", show_alert=True)
 
 @bot.message_handler(func=lambda message: message.text == "💎 نقاطي")
 def my_points(message):
     user = get_user(message.from_user.id)
-    bot.reply_to(message, f"💎 نقاطك: <b>{user['points']}</b>\n📈 مستواك: <b>{user['level']}</b>\n👥 إحالاتك: <b>{user['refs']}</b>", parse_mode="HTML")
+    try: bot.reply_to(message, f"💎 نقاطك: <b>{user['points']}</b>\n📈 مستواك: <b>{user['level']}</b>\n👥 إحالاتك: <b>{user['refs']}</b>", parse_mode="HTML", message_effect_id=FIRE_EFFECT)
+    except: bot.reply_to(message, f"💎 نقاطك: {user['points']}")
 
 @bot.message_handler(func=lambda message: message.text == "🎁 هدية")
 def daily_gift(message):
@@ -409,7 +403,8 @@ def daily_gift(message):
         return bot.reply_to(message, f"⚠️ متبقي: {int(86400 - (now - user['last_daily']))//3600} ساعة.")
     user["last_daily"] = now
     add_points(message.from_user.id, settings.get("daily_gift", 1), "daily")
-    bot.reply_to(message, "🎁 حصلت على نقطة!")
+    try: bot.reply_to(message, "🎁 حصلت على نقطة!", message_effect_id=FIRE_EFFECT)
+    except: bot.reply_to(message, "🎁 حصلت على نقطة!")
 
 @bot.message_handler(func=lambda message: message.text == "🔗 إحالة")
 def ref_link(message):
@@ -422,7 +417,8 @@ def top_users(message):
     text = "🏆 <b>أفضل 5:</b>\n"
     for i, (uid, data) in enumerate(sorted_users, 1):
         text += f"{i}. ID: <code>{uid}</code> - ⭐ {data.get('points', 0)}\n"
-    bot.reply_to(message, text, parse_mode="HTML")
+    try: bot.reply_to(message, text, parse_mode="HTML", message_effect_id=FIRE_EFFECT)
+    except: bot.reply_to(message, text, parse_mode="HTML")
 
 @bot.message_handler(func=lambda message: message.text == "ℹ️ معلومات")
 def bot_info(message):
@@ -447,7 +443,8 @@ def redeem_code_process(message):
         c["used_count"] += 1
         c["used_by"].append(str(message.from_user.id))
         save_db()
-        bot.reply_to(message, f"✅ <b>مبروك!</b> تم شحن <b>{c['amount']} نقطة</b> لحسابك.", parse_mode="HTML")
+        try: bot.reply_to(message, f"✅ <b>مبروك!</b> تم شحن <b>{c['amount']} نقطة</b> لحسابك.", parse_mode="HTML", message_effect_id=FIRE_EFFECT)
+        except: bot.reply_to(message, f"✅ مبروك! تم شحن {c['amount']} نقطة.")
     else:
         bot.reply_to(message, "❌ الكود غير صحيح.")
 
@@ -455,12 +452,14 @@ def redeem_code_process(message):
 @bot.message_handler(func=lambda message: message.text == "👑 لوحة الأدمن")
 def admin_panel(message):
     if not is_admin(message.from_user.id): return
-    bot.send_message(message.chat.id, "👑 <b>لوحة تحكم الأدمن</b>", reply_markup=get_admin_keyboard(), parse_mode="HTML")
+    try: bot.send_message(message.chat.id, "👑 <b>لوحة تحكم الأدمن</b>", reply_markup=get_admin_keyboard(), parse_mode="HTML", message_effect_id=FIRE_EFFECT)
+    except: bot.send_message(message.chat.id, "👑 لوحة تحكم الأدمن", reply_markup=get_admin_keyboard())
 
 @bot.message_handler(func=lambda message: message.text == "👤 وضع المستخدم")
 def user_mode(message):
     if not is_admin(message.from_user.id): return
-    bot.send_message(message.chat.id, "👤 <b>أنت الآن في وضع المستخدم.</b>", reply_markup=get_user_keyboard(message.from_user.id), parse_mode="HTML")
+    try: bot.send_message(message.chat.id, "👤 <b>أنت الآن في وضع المستخدم.</b>", reply_markup=get_user_keyboard(message.from_user.id), parse_mode="HTML", message_effect_id=FIRE_EFFECT)
+    except: bot.send_message(message.chat.id, "👤 أنت الآن في وضع المستخدم.", reply_markup=get_user_keyboard(message.from_user.id))
 
 @bot.message_handler(func=lambda message: is_admin(message.from_user.id) and message.text == "▶️ بدء الصيد")
 def admin_start(message):
@@ -511,7 +510,8 @@ def create_code_uses(message):
         save_db()
         
         text = f"✅ <b>تم إنشاء الكود!</b>\n\n💳 الكود: <code>{code}</code>\n💰 النقاط: {admin_states[message.from_user.id]['amount']}\n👥 الاستخدامات: {uses if uses > 0 else 'لا نهائي'}"
-        bot.send_message(message.chat.id, text, parse_mode="HTML")
+        try: bot.send_message(message.chat.id, text, parse_mode="HTML", message_effect_id=FIRE_EFFECT)
+        except: bot.send_message(message.chat.id, text, parse_mode="HTML")
         del admin_states[message.from_user.id]
     except:
         bot.reply_to(message, "❌ رقم غير صحيح.")
@@ -527,7 +527,7 @@ def admin_add_points_process(message):
         uid, amount = parts[0], int(parts[1])
         add_points(uid, amount, "admin_add")
         bot.reply_to(message, f"✅ تم إضافة {amount} نقطة للآيدي {uid}.")
-        try: bot.send_message(uid, f"🎁 تم إضافة {amount} نقطة لحسابك من قبل الإدارة.")
+        try: bot.send_message(uid, f"🎁 تم إضافة {amount} نقطة لحسابك من قبل الإدارة.", message_effect_id=FIRE_EFFECT)
         except: pass
     except:
         bot.reply_to(message, "❌ الصيغة غير صحيحة.")
@@ -554,7 +554,8 @@ def admin_stats(message):
     total_hits = sum(1 for _ in open("stock.txt")) if os.path.exists("stock.txt") else 0
     ig_hits = sum(1 for _ in open("ig_stock.txt")) if os.path.exists("ig_stock.txt") else 0
     text = f"📊 <b>إحصائيات البوت:</b>\n\n👥 المستخدمين: {len(users)}\n🚗 مخزن Car: {total_hits}\n📸 مخزن IG: {ig_hits}\n🎟️ الأكواد: {len(codes)}\n🏃 الحالة: {'شغال 🟢' if running else 'متوقف 🔴'}"
-    bot.reply_to(message, text, parse_mode="HTML")
+    try: bot.reply_to(message, text, parse_mode="HTML", message_effect_id=FIRE_EFFECT)
+    except: bot.reply_to(message, text, parse_mode="HTML")
 
 @bot.message_handler(func=lambda message: is_admin(message.from_user.id) and message.text == "⚙️ القنوات")
 def admin_channels(message):

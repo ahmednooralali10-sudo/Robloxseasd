@@ -14,7 +14,7 @@ from flask_socketio import SocketIO
 from user_agent import generate_user_agent
 
 # --- إعدادات البوت ---
-BOT_TOKEN = "" # <--- حط توكن البوت هنا بين الأقواس
+BOT_TOKEN = "8807194549:AAGcUNewT82vYW7rxdngAdSYOTlvCvYUOo8" # <--- حط توكن البوت هنا بين الأقواس
 ADMIN_ID = 7075895496 # <--- حط ايديك هنا (الرقم اللي طلع لك فوق)
 
 # --- Flask للسيرفر (عشان Render يبقى شغال) ---

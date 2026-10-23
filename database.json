@@ -1,0 +1,11 @@
+{
+    "users": {},
+    "channels": {},
+    "banned": [],
+    "settings": {
+        "daily_gift": 1,
+        "ref_points": 5,
+        "min_cars": 30,
+        "maintenance": false
+    }
+}

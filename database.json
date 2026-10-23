@@ -2,6 +2,7 @@
     "users": {},
     "channels": {},
     "banned": [],
+    "codes": {},
     "settings": {
         "daily_gift": 1,
         "ref_points": 5,

@@ -1,145 +1,204 @@
 import os
+import json
 import threading
 import requests
 import datetime
 from flask import Flask
-import telebot
-from telebot import types
+from io import BytesIO
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (
+    ApplicationBuilder, CommandHandler, MessageHandler, filters,
+    ContextTypes, ConversationHandler, CallbackQueryHandler
+)
+from telegram.constants import ParseMode
+from telegram.helpers import escape_markdown
 from user_agent import generate_user_agent
 
-# --- الإعدادات ---
-BOT_TOKEN = "8807194549:AAGcUNewT82vYW7rxdngAdSYOTlvCvYUOo8"
-ADMIN_ID = 7075895496
+# ---عدادات ---
+TOKEN = "8807194549:AAGcUNewT82vYW7rxdngAdSYOTlvCvYUOo8"
+CHANNEL_ID = "@vaul3t" # تقدر تغيره أو تشيله
 
 # --- Flask للسيرفر ---
 app = Flask(__name__)
 
 @app.route("/")
 def index():
-    return "TikTok Bot is running perfectly!"
+    return "TikTok Bot is running!"
 
 def keep_alive():
     t = threading.Thread(target=lambda: app.run(host="0.0.0.0", port=10000))
     t.daemon = True
     t.start()
 
-# --- إعدادات البوت ---
-bot = telebot.TeleBot(BOT_TOKEN)
+# --- دالة جلب معلومات التيك توك ---
+class TiktokUserScraper:
+    URI_BASE = 'https://www.tiktok.com/'
 
-# --- دالة جلب معلومات تيك توك ---
-def get_tiktok_info(username):
-    try:
-        session = requests.Session()
-        session.headers.update({
-            "User-Agent": generate_user_agent(),
-            "Accept": "application/json, text/plain, */*",
-            "Accept-Language": "en-US,en;q=0.9",
-        })
-        
-        session.get(f"https://www.tiktok.com/@{username}", timeout=10)
-        
-        url = f"https://www.tiktok.com/api/user/detail/?uniqueId={username}&aid=1988"
-        r = session.get(url, timeout=15)
-        
-        if r.status_code != 200:
-            return {"error": f"فشل الاتصال، كود: {r.status_code}"}
-            
-        data = r.json()
-        
-        if "userInfo" not in data or "user" not in data["userInfo"]:
-            return {"error": "الحساب غير موجود أو محظور."}
-            
-        user = data["userInfo"]["user"]
-        stats = data["userInfo"]["stats"]
-        
-        create_time = user.get("createTime", 0)
+    def get_user_details(self, username):
         try:
-            created_date = datetime.datetime.utcfromtimestamp(create_time).strftime('%Y-%m-%d')
-        except:
-            created_date = "Unknown"
+            session = requests.Session()
+            session.headers.update({
+                "User-Agent": generate_user_agent(),
+                "Accept": "application/json, text/plain, */*",
+                "Accept-Language": "en-US,en;q=0.9",
+            })
+            # طلب الصفحة لتخطي الحماية
+            session.get(f"https://www.tiktok.com/@{username}", timeout=10)
             
-        info = {
-            "username": user.get("uniqueId", username),
-            "nickname": user.get("nickname", "N/A"),
-            "region": user.get("region", "N/A"),
-            "followers": stats.get("followerCount", 0),
-            "following": stats.get("followingCount", 0),
-            "likes": stats.get("heartCount", 0),
-            "videos": stats.get("videoCount", 0),
-            "verified": "✅" if user.get("verified", False) else "❌",
-            "private": "🔒" if user.get("privateAccount", False) else "🔓",
-            "bio": user.get("signature", "N/A"),
-            "created": created_date,
-            "id": user.get("id", "N/A")
-        }
-        return info
-    except Exception as e:
-        return {"error": str(e)}
+            url = f"https://www.tiktok.com/api/user/detail/?uniqueId={username}&aid=1988"
+            r = session.get(url, timeout=15)
+            
+            if r.status_code != 200:
+                return {"error": f"فشل الاتصال، كود: {r.status_code}"}
+                
+            data = r.json()
+            if "userInfo" not in data or "user" not in data["userInfo"]:
+                return {"error": "🚨 الحساب غير موجود أو محظور."}
+                
+            user = data["userInfo"]["user"]
+            stats = data["userInfo"]["stats"]
+            
+            create_time = user.get("createTime", 0)
+            try:
+                created_date = datetime.datetime.utcfromtimestamp(create_time).strftime('%Y-%m-%d')
+            except:
+                created_date = "Unknown"
+                
+            result = {
+                "Username": f"@{user.get('uniqueId', username)}",
+                "Nickname": user.get("nickname", "N/A"),
+                "User ID": user.get("id", "N/A"),
+                "Region": user.get("region", "N/A"),
+                "Followers": f"{stats.get('followerCount', 0):,}",
+                "Following": f"{stats.get('followingCount', 0):,}",
+                "Likes": f"{stats.get('heartCount', 0):,}",
+                "Videos": f"{stats.get('videoCount', 0):,}",
+                "Verified": "✅ Yes" if user.get("verified", False) else "❌ No",
+                "Private": "🔒 Yes" if user.get("privateAccount", False) else "🔓 No",
+                "Bio": user.get("signature", "N/A"),
+                "Created": created_date,
+                "Profile Picture": user.get("avatarLarger", "N/A"),
+                "_raw_user": user
+            }
+            return result
+        except Exception as e:
+            return {"error": f"حدث خطأ: {str(e)}"}
+
+scraper = TiktokUserScraper()
+
+USERNAME, USER_ID = range(2)
 
 # --- أوامر البوت ---
-@bot.message_handler(commands=['start'])
-def send_welcome(message):
-    if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "عذراً، هذا البوت خاص.")
-        return
-    
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
-    btn = types.KeyboardButton("🔍 جلب معلومات حساب")
-    markup.add(btn)
-    
-    bot.send_message(
-        message.chat.id,
-        "أهلاً بك في بوت تيك توك (نسخة ALPHA XK).\nاضغط الزر تحت وأرسل اسم المستخدم (بدون @) عشان يجيب لك كل المعلومات (الدولة، المتابعين، والايدي المخفي).",
-        reply_markup=markup
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.message.reply_text(
+        "👋 أرسل لي اسم مستخدم تيك توك (بدون @) عشان أجيب لك كل المعلومات.\n/cancel للإلغاء.",
+        parse_mode=ParseMode.MARKDOWN
     )
+    return USERNAME
 
-@bot.message_handler(func=lambda message: message.text == "🔍 جلب معلومات حساب")
-def ask_username(message):
-    msg = bot.reply_to(message, "أرسل اسم المستخدم (مثال: charlidamelio)")
-    bot.register_next_step_handler(msg, process_username)
+async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user_input = update.message.text.strip().replace("@", "")
+    result = scraper.get_user_details(user_input)
 
-def process_username(message):
-    username = message.text.strip().replace("@", "")
-    if not username:
-        bot.reply_to(message, "اسم المستخدم فاضي، جرب مرة ثانية.")
-        return
+    if 'error' in result:
+        await update.message.reply_text(result['error'])
+        return ConversationHandler.END
         
-    bot.reply_to(message, f"⏳ جاري جلب معلومات الحساب: @{username} ...")
-    
-    info = get_tiktok_info(username)
-    
-    if not info:
-        bot.reply_to(message, f"❌ ما لقيت حساب باسم: @{username}")
-        return
+    profile_pic = result.pop('Profile Picture', None)
+    if profile_pic and profile_pic != 'N/A':
+        try:
+            await update.message.reply_photo(photo=profile_pic)
+        except Exception:
+            pass
+
+    result.pop('_raw_user', None)
+    response = "📋 *TikTok Account Details*\n\n"
+    for key, value in result.items():
+        safe_key = escape_markdown(key, version=2)
+        safe_value = escape_markdown(str(value), version=2)
+        response += f"*{safe_key}*: {safe_value}\n"
+
+    keyboard = [[InlineKeyboardButton("🔄 Refresh Information", callback_data=f"refresh:{user_input}")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await update.message.reply_text(
+        response,
+        parse_mode=ParseMode.MARKDOWN_V2,
+        disable_web_page_preview=True,
+        reply_markup=reply_markup
+    )
+    return ConversationHandler.END
+
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.message.reply_text('❌ Operation cancelled')
+    return ConversationHandler.END
+
+async def refresh_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    identifier = query.data.split(':', 1)[1]
+
+    try:
+        result = scraper.get_user_details(identifier)
+
+        if 'error' in result:
+            await query.edit_message_text(text=result['error'])
+            return
+
+        result.pop('_raw_user', None)
+        result.pop('Profile Picture', None)
         
-    if "error" in info:
-        bot.reply_to(message, f"❌ خطأ: {info['error']}")
-        return
-        
-    text = f"""
-<b>📊 معلومات حساب تيك توك</b>
+        response = "📋 *TikTok Account Details*\n\n"
+        for key, value in result.items():
+            safe_key = escape_markdown(key, version=2)
+            safe_value = escape_markdown(str(value), version=2)
+            response += f"*{safe_key}*: {safe_value}\n"
 
-👤 <b>Username:</b> <code>@{info['username']}</code>
-📛 <b>Nickname:</b> <code>{info['nickname']}</code>
-🌍 <b>الدولة (Region):</b> <code>{info['region']}</code>
-🆔 <b>ID:</b> <code>{info['id']}</code>
-✅ <b>موثق:</b> {info['verified']}
-🔒 <b>خاص:</b> {info['private']}
+        keyboard = [
+            [InlineKeyboardButton("🔄 Refresh Information", callback_data=f"refresh:{identifier}")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
 
-📈 <b>الإحصائيات:</b>
-👥 المتابعين: <code>{info['followers']:,}</code>
-👣 يتابع: <code>{info['following']:,}</code>
-❤️ اللايكات: <code>{info['likes']:,}</code>
-🎬 الفيديوهات: <code>{info['videos']:,}</code>
+        try:
+            await query.edit_message_text(
+                text=response,
+                parse_mode=ParseMode.MARKDOWN_V2,
+                disable_web_page_preview=True,
+                reply_markup=reply_markup
+            )
+        except Exception as e:
+            if "Message is not modified" in str(e):
+                await query.answer("✅ المعلومات محدثة بالفعل.")
+    except Exception as e:
+        await query.message.reply_text(f"⚠️ فشل التحديث: {str(e)}")
 
-📅 <b>تاريخ الإنشاء:</b> <code>{info['created']}</code>
-📝 <b>البايو:</b> {info['bio']}
-🔗 <b>الرابط:</b> https://www.tiktok.com/@{info['username']}
-"""
-    bot.send_message(message.chat.id, text, parse_mode="HTML", disable_web_page_preview=True)
+async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    print(f"Error found: {context.error}")
+    try:
+        if update.message:
+            await update.message.reply_text("⚠️ حدث خطأ، جرب مرة ثانية.")
+        elif update.callback_query:
+            await update.callback_query.message.reply_text("⚠️ حدث خطأ، جرب مرة ثانية.")
+    except Exception:
+        pass
 
-# --- تشغيل ---
-if __name__ == "__main__":
+def main() -> None:
+    application = ApplicationBuilder().token(TOKEN).build()
+    application.add_error_handler(error_handler)
+
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler('start', start)],
+        states={
+            USERNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_input)],
+        },
+        fallbacks=[CommandHandler('cancel', cancel)]
+    )
+    application.add_handler(conv_handler)
+    application.add_handler(CallbackQueryHandler(refresh_callback, pattern="^refresh:"))
+
+    print("Bot running...")
+    application.run_polling()
+
+if __name__ == '__main__':
     keep_alive()
-    print("TikTok Bot is running...")
-    bot.infinity_polling()
+    main()

@@ -1,21 +1,22 @@
 import os
 import threading
 import requests
+import datetime
+from flask import Flask
 import telebot
 from telebot import types
-from flask import Flask
-from tiktok_api import TT_Content_Scraper
+from user_agent import generate_user_agent
 
 # --- الإعدادات ---
-BOT_TOKEN = "8807194549:AAGcUNewT82vYW7rxdngAdSYOTlvCvYUOo8"  # -
-ADMIN_ID = 7075895496        # <--- الآيدي حقك
+BOT_TOKEN = "8807194549:AAGcUNewT82vYW7rxdngAdSYOTlvCvYUOo8"
+ADMIN_ID = 7075895496
 
 # --- Flask للسيرفر ---
 app = Flask(__name__)
 
 @app.route("/")
 def index():
-    return "TikTok Bot is running!"
+    return "TikTok Bot is running perfectly!"
 
 def keep_alive():
     t = threading.Thread(target=lambda: app.run(host="0.0.0.0", port=10000))
@@ -28,39 +29,48 @@ bot = telebot.TeleBot(BOT_TOKEN)
 # --- دالة جلب معلومات تيك توك ---
 def get_tiktok_info(username):
     try:
-        scraper = TT_Content_Scraper(
-            wait_time=0.35,
-            output_files_fp="tiktok_data/",
-            progress_file_fn="tiktok_data/progress.db",
-            clear_console=False,
-        )
-        scraper.add_objects(ids=[username], title="user_lookup", type="user")
-        scraper.scrape_pending(scrape_files=False)
+        session = requests.Session()
+        session.headers.update({
+            "User-Agent": generate_user_agent(),
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "en-US,en;q=0.9",
+        })
         
-        # البحث عن الملف اللي تم إنشاؤه
-        import json
-        import glob
-        files = glob.glob(f"tiktok_data/user_metadata/{username}.json")
-        if not files:
-            return None
+        session.get(f"https://www.tiktok.com/@{username}", timeout=10)
+        
+        url = f"https://www.tiktok.com/api/user/detail/?uniqueId={username}&aid=1988"
+        r = session.get(url, timeout=15)
+        
+        if r.status_code != 200:
+            return {"error": f"فشل الاتصال، كود: {r.status_code}"}
             
-        with open(files[0], 'r', encoding='utf-8') as f:
-            data = json.load(f)
+        data = r.json()
+        
+        if "userInfo" not in data or "user" not in data["userInfo"]:
+            return {"error": "الحساب غير موجود أو محظور."}
+            
+        user = data["userInfo"]["user"]
+        stats = data["userInfo"]["stats"]
+        
+        create_time = user.get("createTime", 0)
+        try:
+            created_date = datetime.datetime.utcfromtimestamp(create_time).strftime('%Y-%m-%d')
+        except:
+            created_date = "Unknown"
             
         info = {
-            "username": data.get("uniqueId", username),
-            "nickname": data.get("nickname", "N/A"),
-            "region": data.get("region", "N/A"),
-            "followers": data.get("followerCount", 0),
-            "following": data.get("followingCount", 0),
-            "likes": data.get("heartCount", 0),
-            "videos": data.get("videoCount", 0),
-            "verified": "✅" if data.get("verified", False) else "❌",
-            "private": "🔒" if data.get("privateAccount", False) else "🔓",
-            "bio": data.get("signature", "N/A"),
-            "created": data.get("createTime", "N/A"),
-            "avatar": data.get("avatarLarger", "N/A"),
-            "secUid": data.get("secUid", "N/A"),
+            "username": user.get("uniqueId", username),
+            "nickname": user.get("nickname", "N/A"),
+            "region": user.get("region", "N/A"),
+            "followers": stats.get("followerCount", 0),
+            "following": stats.get("followingCount", 0),
+            "likes": stats.get("heartCount", 0),
+            "videos": stats.get("videoCount", 0),
+            "verified": "✅" if user.get("verified", False) else "❌",
+            "private": "🔒" if user.get("privateAccount", False) else "🔓",
+            "bio": user.get("signature", "N/A"),
+            "created": created_date,
+            "id": user.get("id", "N/A")
         }
         return info
     except Exception as e:
@@ -72,12 +82,14 @@ def send_welcome(message):
     if message.from_user.id != ADMIN_ID:
         bot.reply_to(message, "عذراً، هذا البوت خاص.")
         return
+    
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
     btn = types.KeyboardButton("🔍 جلب معلومات حساب")
     markup.add(btn)
+    
     bot.send_message(
         message.chat.id,
-        "أهلاً بك في بوت تيك توك.\nاضغط الزر تحت وأرسل اسم المستخدم (بدون @) عشان يجيب لك كل المعلومات.",
+        "أهلاً بك في بوت تيك توك (نسخة ALPHA XK).\nاضغط الزر تحت وأرسل اسم المستخدم (بدون @) عشان يجيب لك كل المعلومات (الدولة، المتابعين، والايدي المخفي).",
         reply_markup=markup
     )
 
@@ -110,6 +122,7 @@ def process_username(message):
 👤 <b>Username:</b> <code>@{info['username']}</code>
 📛 <b>Nickname:</b> <code>{info['nickname']}</code>
 🌍 <b>الدولة (Region):</b> <code>{info['region']}</code>
+🆔 <b>ID:</b> <code>{info['id']}</code>
 ✅ <b>موثق:</b> {info['verified']}
 🔒 <b>خاص:</b> {info['private']}
 

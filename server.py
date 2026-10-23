@@ -68,7 +68,7 @@ app = Flask(__name__)
 
 @app.route("/")
 def index():
-    return "Mehdi's Car Parking Bot - System Online"
+    return "Mehdi's Bot - System Online"
 
 def keep_alive():
     def run():
@@ -144,7 +144,7 @@ def get_admin_keyboard():
     markup.add("👤 وضع المستخدم")
     return markup
 
-# ================== دوال صيد Car Parking ==================
+# ================== دوال صيد Car Parking (حسابات) ==================
 def http_post(url, json_data=None, headers=None, timeout=10):
     try:
         data = json.dumps(json_data).encode('utf-8') if json_data else None
@@ -217,23 +217,44 @@ def run_checker():
     for _ in range(THREADS): threading.Thread(target=worker, daemon=True).start()
     while running and not STOP_FLAG.is_set(): time.sleep(10)
 
-# ================== دوال صيد إنستقرام ==================
-def check_ig_account():
+# ================== دوال صيد يوزرات إنستقرام ==================
+IG_NAMES = ['ahmed', 'mohamed', 'ali', 'omar', 'yousef', 'khaled', 'sara', 'mona', 'lina', 'noor', 'john', 'mike', 'david', 'james', 'robert', 'mary', 'linda', 'susan', 'karen', 'nancy', 'alex', 'max', 'sam', 'chris', 'daniel', 'jessica', 'emily', 'ashley', 'sarah', 'amanda']
+IG_WORDS = ['official', 'real', 'the', 'best', 'pro', 'king', 'queen', 'star', 'legend', 'epic', 'cool', 'fast', 'dark', 'light', 'fire', 'ice', 'wolf', 'lion', 'tiger', 'eagle', 'game', 'play', 'art', 'music', 'life', 'love', 'peace', 'world', 'tech', 'vibe']
+
+def generate_ig_username():
+    pattern = random.randint(0, 4)
+    if pattern == 0: return f"{random.choice(IG_NAMES)}{random.choice(IG_WORDS)}"
+    elif pattern == 1: return f"{random.choice(IG_NAMES)}_{random.choice(IG_NAMES)}"
+    elif pattern == 2: return f"{random.choice(IG_WORDS)}{random.choice(IG_NAMES)}"
+    elif pattern == 3: return f"{random.choice(IG_NAMES)}{random.randint(1, 9999)}"
+    else: return f"{random.choice(IG_WORDS)}_{random.choice(IG_WORDS)}"
+
+def check_ig_username(username):
     global good, bad
     try:
-        username = random.choice(['cool', 'fast']) + str(random.randint(10, 99))
-        time.sleep(0.1)
-        if random.randint(1, 100) <= 5: 
-            with lock: good += 1
-            with open("ig_stock.txt", 'a', encoding='utf-8') as f: f.write(f'{username}|{username}@gmail.com|123456789\n')
-        else:
+        url = "https://www.instagram.com/api/v1/web/accounts/web_create_ajax/attempt/"
+        data = f"email=&username={username}&first_name=&opt_into_one_tap=false"
+        req = urllib.request.Request(url, data=data.encode('utf-8'), method='POST')
+        req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
+        req.add_header('Content-Type', 'application/x-www-form-urlencoded')
+        req.add_header('X-Requested-With', 'XMLHttpRequest')
+        
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            res = json.loads(resp.read().decode('utf-8'))
+            
+        if 'errors' in res and 'username_is_taken' in str(res):
             with lock: bad += 1
-    except: pass
+        else:
+            with lock: good += 1
+            with open("ig_stock.txt", 'a', encoding='utf-8') as f: f.write(f'{username}\n')
+    except:
+        with lock: bad += 1
 
 def ig_worker():
     while not IG_STOP_FLAG.is_set():
-        check_ig_account()
-        time.sleep(random.uniform(0.05, 0.1))
+        username = generate_ig_username()
+        check_ig_username(username)
+        time.sleep(random.uniform(0.1, 0.5))
 
 def run_ig_checker():
     global ig_running, good, bad
@@ -319,17 +340,24 @@ def buy_ig(call):
         with open("ig_stock.txt", 'r', encoding='utf-8') as f: lines = f.readlines()
         
         if not lines:
-            bot.answer_callback_query(call.id, "⏳ المخزن فاضي، جاري صيد حساب إنستقرام لك... انتظر قليلاً.", show_alert=True)
+            bot.answer_callback_query(call.id, "⏳ المخزن فاضي، جاري صيد يوزرات إنستقرام لك... انتظر قليلاً.", show_alert=True)
             if not ig_running:
                 threading.Thread(target=run_ig_checker, daemon=True).start()
             return
             
-        bought = lines[0]
+        bought = lines[0].strip()
         with open("ig_stock.txt", 'w', encoding='utf-8') as f: f.writelines(lines[1:])
         user["points"] -= cost[c_type]
         user["ig_bought"] += 1
         save_db()
-        bot.send_message(call.from_user.id, f"✅ <b>تم الشراء بنجاح!</b>\n\n<code>{bought}</code>", parse_mode="HTML")
+        
+        msg = (
+            f"✅ <b>تم شراء اليوزر بنجاح!</b>\n\n"
+            f"👤 اليوزر: <code>@{bought}</code>\n"
+            f"🔗 الرابط: https://instagram.com/{bought}\n\n"
+            f"<i>تقدر تسجله الآن من تطبيق إنستقرام.</i>"
+        )
+        bot.send_message(call.from_user.id, msg, parse_mode="HTML", disable_web_page_preview=True)
     except: bot.answer_callback_query(call.id, "⚠️ خطأ.", show_alert=True)
 
 @bot.message_handler(func=lambda message: message.text == "💎 نقاطي")
@@ -566,5 +594,3 @@ if __name__ == "__main__":
             
     keep_alive()
     logging.info("Bot Started")
-    try: bot.infinity_polling(timeout=60, long_polling_timeout=60)
-    except: pass

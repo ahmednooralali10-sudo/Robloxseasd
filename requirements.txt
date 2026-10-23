@@ -1,4 +1,2 @@
-python-telegram-bot==20.7
-requests==2.32.3
-user-agent==0.1.0
-flask==3.0.3
+requests
+beautifulsoup4

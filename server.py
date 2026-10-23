@@ -14,14 +14,14 @@ BOT_TOKEN = "8730263970:AAHTcWNLwUOCBnXWsPbG_vho68cGEoFZy4M"
 BOT_USERNAME = "@VISITTTTTBOT"
 BOT_LINK = f"https://t.me/{BOT_USERNAME.replace('@', '')}"
 
-# المشرفين (تقدر تضيف آيديات ثانية هنا)
+# المشرفين
 ADMINS = ["7075895496"]
 
 # ================== Flask ==================
 app = Flask(__name__)
 
 @app.route("/")
-def index(): return "Pro File Bot - Multi Features is Online!"
+def index(): return "Pro File Bot is Online!"
 
 def keep_alive():
     def run():
@@ -85,7 +85,7 @@ def get_admin_kb():
 def log_action(action, user_id, details=""):
     logging.info(f"ACTION: {action} | USER: {user_id} | {details}")
 
-# ================== تتبع القنوات (إذا أضاف شخص البوت لقناته) ==================
+# ================== تتبع القنوات ==================
 @bot.my_chat_member_handler()
 def track_groups(message: types.ChatMemberUpdated):
     try:
@@ -142,7 +142,6 @@ def send_file(chat_id, fid):
     try: 
         m = types.InlineKeyboardMarkup(row_width=2)
         
-        # الأزرار الثابتة (قناة المطور + إضافة البوت)
         btn1 = db["settings"]["btn1_text"]
         btn2 = db["settings"]["btn2_text"]
         
@@ -220,16 +219,15 @@ def add_batch_files(m):
     bot.send_message(m.chat.id, f"✅ {name} تمت إضافته ({admin_states[m.from_user.id]['count']}).")
 
 @bot.message_handler(commands=['done'])
-def done_adding"))
-(m):
-    if not is    if end <_admin(m len.from_user.id): return
+def done_adding(m):
+    if not is_admin(m.from_user.id): return
     state = admin_states.get(m.from_user.id, {})
     if state.get("step") == "batch_files":
         count = state["count"]
         del admin_states[m.from_user.id]
         bot.send_message(m.chat.id, f"🎉 تم رفع {count} ملف بنجاح!", reply_markup=get_admin_kb())
 
-# ================== إدارة الملفات (بالأزرار) ==================
+# ================== إدارة الملفات ==================
 @bot.message_handler(func=lambda m: is_admin(m.from_user.id) and m.text == "📋 إدارة الملفات")
 def list_files(m):
     if not db["files"]: return bot.send_message(m.chat.id, "⚠️ لا توجد ملفات.")
@@ -246,7 +244,8 @@ def show_files_page(chat_id, page):
         mark.add(types.InlineKeyboardButton(f"📄 {info['name'][:25]}", callback_data=f"v_{fid}"))
     
     nav = []
-    if page > 0: nav.append(types.InlineKeyboardButton("⬅️ السابق", callback_data=f"pg_{page-1}(files): nav.append(types.InlineKeyboardButton("التالي ➡️", callback_data=f"pg_{page+1}"))
+    if page > 0: nav.append(types.InlineKeyboardButton("⬅️ السابق", callback_data=f"pg_{page-1}"))
+    if end < len(files): nav.append(types.InlineKeyboardButton("التالي ➡️", callback_data=f"pg_{page+1}"))
     
     if nav: mark.row(*nav)
     

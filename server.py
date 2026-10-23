@@ -14,7 +14,7 @@ import telebot
 from telebot import types
 
 # ================== الإعدادات العامة ==================
-BOT_TOKEN = "8730263970:AAHTcWNLwUOCBnXWsPbG_vho68cGEoFZy4M"
+BOT_TOKEN = "8807194549:AAGcUNewT82vYW7rxdngAdSYOTlvCvYUOo8"
 ADMIN_ID = "7075895496"
 ADMIN_USERNAME = "@XOREYT"
 THREADS = 150
@@ -25,9 +25,6 @@ FIRE_EFFECT = 5104841245755180586
 DB_FILE = "database.json"
 
 logging.basicConfig(filename="logs.txt", level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-def log_action(action, user_id, details=""):
-    logging.info(f"ACTION: {action} | USER: {user_id} | DETAILS: {details}")
 
 def load_db():
     if os.path.exists(DB_FILE):
@@ -64,14 +61,12 @@ def index(): return "Mehdi's Bot - System Online"
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# ================== دالة إرسال التأثير ==================
 def send_with_fire(chat_id, text, markup=None, parse_mode="HTML"):
     try:
         bot.send_message(chat_id, text, reply_markup=markup, parse_mode=parse_mode, message_effect_id=FIRE_EFFECT)
     except Exception:
         bot.send_message(chat_id, text, reply_markup=markup, parse_mode=parse_mode)
 
-# ================== دوال مساعدة ==================
 def is_banned(user_id): return str(user_id) in banned_users
 def is_admin(user_id): return str(user_id) == ADMIN_ID
 
@@ -203,11 +198,10 @@ def run_checker():
     for _ in range(THREADS): threading.Thread(target=worker, daemon=True).start()
     while running and not STOP_FLAG.is_set(): time.sleep(10)
 
-# ================== دوال صيد يوزرات إنستقرام (SANITITO TOOL) ==================
+# ================== دوال صيد يوزرات إنستقرام (SANITITO) ==================
 def check_ig_username():
     global good, bad
     try:
-        # نفس منطق أداة SANITITO
         uus = '_6w9u.fzqa_jcv.pnx_'
         ks = str(''.join(random.choice(uus) for i in range(5)))
         
@@ -237,13 +231,11 @@ def check_ig_username():
         
         response = requests.post(url, headers=headers_kai, data=datas_kai, timeout=10)
         
-        # التحقق من رد إنستقرام (إذا رجع رسالة الخطأ المعروفة، يعني اليوزر متاح)
         ku = ('{"account_created": false, "errors": {"email": [{"message": "Too many accounts are using a@gmail.com.", "code": "email_sharing_limit"}], "__all__": [{"message": "Create a password at least 6 characters long.", "code": "too_short_password"}]}, "dryrun_passed": false, "username_suggestions": [], "status": "ok", "error_type": "form_validation_error"}')
         
         if ku in response.text:
             with lock: good += 1
             with open("ig_stock.txt", 'a', encoding='utf-8') as f: f.write(f'{ks}\n')
-            log_action("IG_HIT", "SYSTEM", f"Found username: {ks}")
         else:
             with lock: bad += 1
     except Exception as e:
@@ -261,18 +253,14 @@ def run_ig_checker():
     for _ in range(30): threading.Thread(target=ig_worker, daemon=True).start()
     while ig_running and not IG_STOP_FLAG.is_set(): time.sleep(10)
 
-# ================== دالة شريط التحميل والاسترجاع ==================
 def wait_and_refund(chat_id, msg_id, user_id, cost, file_type, mode_text):
     start_time = time.time()
-    
     while time.time() - start_time < MAX_WAIT_TIME:
         time.sleep(10)
         elapsed = time.time() - start_time
         progress = int((elapsed / MAX_WAIT_TIME) * 100)
-        
         filled = "▓" * (progress // 10) + "░" * (10 - (progress // 10))
         minutes = int((MAX_WAIT_TIME - elapsed) // 60)
-        
         try:
             bot.edit_message_text(
                 f"⏳ <b>{mode_text}</b>\n\n[{filled}] {progress}%\n\n⏱️ الوقت المتبقي: {minutes} دقيقة\n<i>(سيتم استرجاع نقاطك تلقائياً عند الانتهاء).</i>",
@@ -288,17 +276,13 @@ def wait_and_refund(chat_id, msg_id, user_id, cost, file_type, mode_text):
                     return
 
     add_points(user_id, cost, "refund_timeout")
-    bot.edit_message_text(
-        f"❌ <b>عذراً، لم نجد أي طلب خلال {MAX_WAIT_TIME//60} دقيقة.</b>\n\n💰 تم استرجاع <b>{cost} نقطة</b> لحسابك تلقائياً.",
-        chat_id, msg_id, parse_mode="HTML"
-    )
+    bot.edit_message_text(f"❌ <b>عذراً، لم نجد أي طلب.</b>\n💰 تم استرجاع <b>{cost} نقطة</b> لحسابك.", chat_id, msg_id, parse_mode="HTML")
 
 # ================== أوامر البوت العامة ==================
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     if is_banned(message.from_user.id): return bot.reply_to(message, "🚫 محظور.")
     if not check_forced_sub(message): return
-    
     user = get_user(message.from_user.id)
     ref_id = message.text.split()[1] if len(message.text.split()) > 1 else None
     if ref_id and ref_id != str(message.from_user.id) and user["referred_by"] is None:
@@ -311,7 +295,6 @@ def send_welcome(message):
                 save_db()
                 bot.send_message(int(ref_id), f"🎉 شخص جديد دخل! +{settings.get('ref_points', 5)} نقاط.")
         except: pass
-
     text = f"👋 <b>أهلاً {message.from_user.first_name}!</b>\n\n💎 نقاطك: {user['points']}\n📈 مستواك: {user['level']}"
     send_with_fire(message.chat.id, text, get_user_keyboard(message.from_user.id))
 
@@ -328,24 +311,17 @@ def buy_hit(call):
     amount = int(call.data.split("_")[1])
     cost = {1: 1, 5: 4}[amount]
     user = get_user(call.from_user.id)
-    
     if user["points"] < cost: return bot.answer_callback_query(call.id, "❌ نقاطك غير كافية!", show_alert=True)
-    
     try:
         with open("stock.txt", 'r', encoding='utf-8') as f: lines = f.readlines()
-        
         if len(lines) < amount:
             user["points"] -= cost
             save_db()
             bot.answer_callback_query(call.id, "⏳ المخزن فاضي، جاري الصيد...", show_alert=False)
             msg = send_with_fire(call.from_user.id, "⏳ جاري تجهيز الصيد...")
-            
-            if not running:
-                threading.Thread(target=run_checker, daemon=True).start()
-                
+            if not running: threading.Thread(target=run_checker, daemon=True).start()
             threading.Thread(target=wait_and_refund, args=(call.from_user.id, msg.message_id, call.from_user.id, cost, "car", "جاري صيد حساب Car Parking..."), daemon=True).start()
             return
-        
         bought = lines[:amount]
         with open("stock.txt", 'w', encoding='utf-8') as f: f.writelines(lines[amount:])
         user["points"] -= cost
@@ -359,33 +335,25 @@ def buy_hit(call):
 def shop_ig(message):
     user = get_user(message.from_user.id)
     markup = types.InlineKeyboardMarkup(row_width=1)
-    markup.add(types.InlineKeyboardButton("📱 ثلاثي (3 حروف) - 5 نقاط", callback_data="ig_3"))
-    markup.add(types.InlineKeyboardButton("📱 رباعي (4 حروف) - 10 نقاط", callback_data="ig_4"))
-    markup.add(types.InlineKeyboardButton("📱 شبه ثلاثي - 3 نقاط", callback_data="ig_semi3"))
-    markup.add(types.InlineKeyboardButton("📱 شبه رباعي - 7 نقاط", callback_data="ig_semi4"))
-    send_with_fire(message.chat.id, f"📸 متجر إنستقرام\nرصيدك: {user['points']} نقطة\n\nاختر نوع الحساب:", markup)
+    markup.add(types.InlineKeyboardButton("📱 ثلاثي - 5 نقاط", callback_data="ig_3"))
+    markup.add(types.InlineKeyboardButton("📱 رباعي - 10 نقاط", callback_data="ig_4"))
+    send_with_fire(message.chat.id, f"📸 متجر إنستقرام\nرصيدك: {user['points']}", markup)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("ig_"))
 def buy_ig(call):
-    cost = {"ig_3": 5, "ig_4": 10, "ig_semi3": 3, "ig_semi4": 7}.get(call.data, 5)
+    cost = {"ig_3": 5, "ig_4": 10}.get(call.data, 5)
     user = get_user(call.from_user.id)
     if user["points"] < cost: return bot.answer_callback_query(call.id, "❌ نقاطك غير كافية!", show_alert=True)
-    
     try:
         with open("ig_stock.txt", 'r', encoding='utf-8') as f: lines = f.readlines()
-        
         if not lines:
             user["points"] -= cost
             save_db()
             bot.answer_callback_query(call.id, "⏳ المخزن فاضي، جاري الصيد...", show_alert=False)
             msg = send_with_fire(call.from_user.id, "⏳ جاري تجهيز الصيد...")
-            
-            if not ig_running:
-                threading.Thread(target=run_ig_checker, daemon=True).start()
-                
+            if not ig_running: threading.Thread(target=run_ig_checker, daemon=True).start()
             threading.Thread(target=wait_and_refund, args=(call.from_user.id, msg.message_id, call.from_user.id, cost, "ig", "جاري صيد يوزر إنستقرام..."), daemon=True).start()
             return
-
         bought = lines[0].strip()
         with open("ig_stock.txt", 'w', encoding='utf-8') as f: f.writelines(lines[1:])
         user["points"] -= cost
@@ -417,8 +385,7 @@ def ref_link(message):
 def top_users(message):
     sorted_users = sorted(users.items(), key=lambda x: x[1].get("total_earned", 0), reverse=True)[:5]
     text = "🏆 <b>أفضل 5:</b>\n"
-    for i, (uid, data) in enumerate(sorted_users, 1):
-        text += f"{i}. ID: <code>{uid}</code> - ⭐ {data.get('points', 0)}\n"
+    for i, (uid, data) in enumerate(sorted_users, 1): text += f"{i}. ID: <code>{uid}</code> - ⭐ {data.get('points', 0)}\n"
     send_with_fire(message.chat.id, text)
 
 @bot.message_handler(func=lambda message: message.text == "ℹ️ معلومات")
@@ -438,7 +405,6 @@ def redeem_code_process(message):
             return send_with_fire(message.chat.id, "❌ هذا الكود استنفذ عدد استخداماته.")
         if str(message.from_user.id) in c["used_by"]:
             return send_with_fire(message.chat.id, "❌ لقد استخدمت هذا الكود مسبقاً.")
-            
         add_points(message.from_user.id, c["amount"], "redeem_code")
         c["used_count"] += 1
         c["used_by"].append(str(message.from_user.id))

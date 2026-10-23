@@ -38,10 +38,10 @@ def get_default_db():
         "channels": [], "files": {}, "users": {}, "banned": [], "groups": {},
         "settings": {
             "maintenance": False, 
-            "welcome": "أهلاً بك! يرجى فتح رابط الملف للتحميل.", 
+            "welcome": "اذا تبي تحط  قناتك في اشتراك اجباري او تنشر ملف تواصل مع المطور @xsaudi96", 
             "daily_file": None, 
             "btn1_text": "📢 قناة المطور", 
-            "btn1_url": "https://t.me/XOREYT",
+            "btn1_url": "https://t.me/mf5rt1",
             "btn2_text": "➕ أضفني لقناتك",
             "btn2_url": f"https://t.me/{BOT_USERNAME.replace('@', '')}?startgroup=true"
         },

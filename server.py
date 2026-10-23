@@ -17,7 +17,7 @@ ADMIN_ID = "7075895496"  # مهدي
 ADMIN_USERNAME = "@XOREYT"
 THREADS = 80  # زدنا السرعة
 
-BOT_LINK = "https://t.me/YourBotLinkHere"  # <--- حط رابط البوت حقك هنا عشان الإحالات تشتغل
+BOT_LINK = "http://t.me/Xoregrops_bot"  # <--- حط رابط البوت حقك هنا عشان الإحالات تشتغل
 DB_USERS = "users.json"
 DB_CHANNELS = "channels.json"
 DB_STOCK = "stock.txt"

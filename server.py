@@ -30,14 +30,10 @@ def keep_alive():
 bot = telebot.TeleBot(BOT_TOKEN)
 logging.basicConfig(filename="logs.txt", level=logging.INFO, format='%(asctime)s - %(message)s')
 
-# ================== قاعدة البيانات ==================
+# ================== قاعدة البيانات (ذاتية الإصلاح) ==================
 DB_FILE = "database.json"
 
-def load_db():
-    if os.path.exists(DB_FILE):
-        try:
-            with open(DB_FILE, 'r', encoding='utf-8') as f: return json.load(f)
-        except: pass
+def get_default_db():
     return {
         "channels": [], "files": {}, "users": {}, "banned": [], "groups": {},
         "settings": {
@@ -52,18 +48,44 @@ def load_db():
         "stats": {"joins": 0, "files_sent": 0}
     }
 
+def load_db():
+    default_db = get_default_db()
+    if os.path.exists(DB_FILE):
+        try:
+            with open(DB_FILE, 'r', encoding='utf-8') as f: 
+                loaded_db = json.load(f)
+                # التأكد من وجود كل المفاتيح الأساسية عشان ما يطيح البوت
+                for key in default_db:
+                    if key not in loaded_db:
+                        loaded_db[key] = default_db[key]
+                    elif isinstance(default_db[key], dict):
+                        for subkey in default_db[key]:
+                            if subkey not in loaded_db[key]:
+                                loaded_db[key][subkey] = default_db[key][subkey]
+                return loaded_db
+        except Exception as e: 
+            print(f"DB Load Error: {e}")
+    return default_db
+
 def save_db():
-    with open(DB_FILE, 'w', encoding='utf-8') as f: json.dump(db, f, ensure_ascii=False, indent=4)
+    try:
+        with open(DB_FILE, 'w', encoding='utf-8') as f: 
+            json.dump(db, f, ensure_ascii=False, indent=4)
+    except Exception as e:
+        print(f"DB Save Error: {e}")
 
 db = load_db()
+
+# التأكد من وجود قسم الملفات عند التشغيل
+if "files" not in db: db["files"] = {}
 admin_states = {}
 
 # ================== دوال مساعدة ==================
 def is_admin(u): return str(u) in ADMINS
-def is_banned(u): return str(u) in db["banned"]
+def is_banned(u): return str(u) in db.get("banned", [])
 
 def check_sub(u):
-    if not db["channels"]: return True
+    if not db.get("channels"): return True
     for ch in db["channels"]:
         try:
             if bot.get_chat_member(ch, u).status in ['left', 'kicked']: return False
@@ -89,11 +111,12 @@ def track_groups(message: types.ChatMemberUpdated):
     try:
         if message.chat.type in ['group', 'supergroup', 'channel']:
             if message.new_chat_member.status in ['member', 'administrator']:
+                if "groups" not in db: db["groups"] = {}
                 db["groups"][str(message.chat.id)] = message.chat.title
                 save_db()
                 bot.send_message(message.chat.id, "✅ تم إضافة البوت بنجاح! أي إذاعة من المطور راح توصل هنا.")
             elif message.new_chat_member.status in ['left', 'kicked']:
-                if str(message.chat.id) in db["groups"]:
+                if "groups" in db and str(message.chat.id) in db["groups"]:
                     del db["groups"][str(message.chat.id)]
                     save_db()
     except: pass
@@ -111,11 +134,12 @@ def start_cmd(message):
     uid = str(message.from_user.id)
     
     if is_banned(uid): return bot.send_message(message.chat.id, "🚫 أنت محظور.")
-    if db["settings"]["maintenance"] and not is_admin(uid): return bot.send_message(message.chat.id, "🛠️ البوت في صيانة حالياً.")
+    if db["settings"].get("maintenance") and not is_admin(uid): return bot.send_message(message.chat.id, "🛠️ البوت في صيانة حالياً.")
 
-    if uid not in db["users"]:
+    if uid not in db.get("users", {}):
+        if "users" not in db: db["users"] = {}
         db["users"][uid] = {"joined": datetime.now().strftime("%Y-%m-%d"), "downloads": 0}
-        db["stats"]["joins"] += 1
+        if "stats" in db: db["stats"]["joins"] = db["stats"].get("joins", 0) + 1
         save_db()
         try: bot.send_message(ADMINS[0], f"👤 مستخدم جديد:\n{message.from_user.first_name}\n`{uid}`", parse_mode="Markdown")
         except: pass
@@ -126,7 +150,7 @@ def start_cmd(message):
     args = message.text.split()
     if len(args) > 1:
         fid = args[1]
-        if fid in db["files"]:
+        if fid in db.get("files", {}):
             if not check_sub(uid):
                 m = types.InlineKeyboardMarkup(row_width=1)
                 for ch in db["channels"]:
@@ -139,24 +163,24 @@ def start_cmd(message):
             return send_file(uid, fid)
         else: return bot.send_message(message.chat.id, "❌ الملف غير موجود أو تم حذفه.")
     
-    bot.send_message(message.chat.id, db["settings"]["welcome"])
+    bot.send_message(message.chat.id, db["settings"].get("welcome", "أهلاً بك!"))
 
 def send_file(chat_id, fid):
     f = db["files"].get(fid)
     if not f: return
     try: 
         m = types.InlineKeyboardMarkup(row_width=2)
-        btn1 = db["settings"]["btn1_text"]
-        btn2 = db["settings"]["btn2_text"]
+        btn1 = db["settings"].get("btn1_text", "📢 قناة المطور")
+        btn2 = db["settings"].get("btn2_text", "➕ أضفني لقناتك")
         
         m.add(
-            types.InlineKeyboardButton(text=btn1, url=db["settings"]["btn1_url"]),
-            types.InlineKeyboardButton(text=btn2, url=db["settings"]["btn2_url"])
+            types.InlineKeyboardButton(text=btn1, url=db["settings"].get("btn1_url", "https://t.me")),
+            types.InlineKeyboardButton(text=btn2, url=db["settings"].get("btn2_url", "https://t.me"))
         )
         
-        bot.send_document(chat_id, f["file_id"], caption=f["desc"], reply_markup=m)
-        db["stats"]["files_sent"] += 1
-        if str(chat_id) in db["users"]: db["users"][str(chat_id)]["downloads"] += 1
+        bot.send_document(chat_id, f["file_id"], caption=f.get("desc", ""), reply_markup=m)
+        if "stats" in db: db["stats"]["files_sent"] = db["stats"].get("files_sent", 0) + 1
+        if str(chat_id) in db.get("users", {}): db["users"][str(chat_id)]["downloads"] = db["users"][str(chat_id)].get("downloads", 0) + 1
         save_db()
         log_action("DOWNLOAD", chat_id, f"File: {fid}")
     except: bot.send_message(chat_id, "⚠️ خطأ في الإرسال.")
@@ -195,6 +219,10 @@ def add_single_file(m):
             return bot.send_message(m.chat.id, "❌ حدث خطأ في قراءة الملف.")
 
         desc = admin_states[m.from_user.id]["desc"]
+        
+        # إصلاح المشكلة: التأكد من وجود قسم الملفات قبل الحفظ
+        if "files" not in db: db["files"] = {}
+        
         db["files"][fid] = {"file_id": file_id, "name": name, "desc": desc, "date": datetime.now().strftime("%Y-%m-%d"), "downloads": 0}
         save_db()
         
@@ -227,6 +255,8 @@ def add_batch_files(m):
         elif m.content_type == 'photo': file_id, name = m.photo[-1].file_id, "صورة.jpg"
         
         desc = admin_states[m.from_user.id]["desc"]
+        
+        if "files" not in db: db["files"] = {}
         db["files"][fid] = {"file_id": file_id, "name": name, "desc": desc, "date": datetime.now().strftime("%Y-%m-%d"), "downloads": 0}
         save_db()
         
@@ -248,18 +278,18 @@ def done_adding(m):
 # ================== إدارة الملفات ==================
 @bot.message_handler(func=lambda m: is_admin(m.from_user.id) and m.text == "📋 إدارة الملفات")
 def list_files(m):
-    if not db["files"]: return bot.send_message(m.chat.id, "⚠️ لا توجد ملفات.")
+    if not db.get("files"): return bot.send_message(m.chat.id, "⚠️ لا توجد ملفات.")
     show_files_page(m.chat.id, 0)
 
 def show_files_page(chat_id, page):
-    files = list(db["files"].items())
+    files = list(db.get("files", {}).items())
     start = page * 5
     end = start + 5
     chunk = files[start:end]
     
     mark = types.InlineKeyboardMarkup(row_width=1)
     for fid, info in chunk:
-        mark.add(types.InlineKeyboardButton(f"📄 {info['name'][:25]}", callback_data=f"v_{fid}"))
+        mark.add(types.InlineKeyboardButton(f"📄 {info.get('name', 'ملف')[:25]}", callback_data=f"v_{fid}"))
     
     nav = []
     if page > 0: nav.append(types.InlineKeyboardButton("⬅️ السابق", callback_data=f"pg_{page-1}"))
@@ -278,23 +308,23 @@ def page_nav(call):
 @bot.callback_query_handler(func=lambda call: call.data.startswith("v_"))
 def view_file(call):
     fid = call.data.split("_")[1]
-    f = db["files"].get(fid)
+    f = db.get("files", {}).get(fid)
     if not f: return
     link = f"{BOT_LINK}?start={fid}"
     mark = types.InlineKeyboardMarkup(row_width=1)
     mark.add(types.InlineKeyboardButton("🗑️ حذف", callback_data=f"delf_{fid}"))
     mark.add(types.InlineKeyboardButton("🔙 رجوع", callback_data="pg_0"))
     
-    text = (f"📄 <b>{f['name']}</b>\n"
+    text = (f"📄 <b>{f.get('name', 'ملف')}</b>\n"
             f"📥 التحميلات: {f.get('downloads', 0)}\n"
-            f"📅 التاريخ: {f['date']}\n\n"
+            f"📅 التاريخ: {f.get('date', 'غير معروف')}\n\n"
             f"🔗 الرابط:\n<code>{link}</code>")
     bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=mark, parse_mode="HTML")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("delf_"))
 def del_file(call):
     fid = call.data.split("_")[1]
-    if fid in db["files"]:
+    if fid in db.get("files", {}):
         del db["files"][fid]
         save_db()
         bot.edit_message_text("✅ تم حذف الملف نهائياً.", call.message.chat.id, call.message.message_id)
@@ -319,7 +349,7 @@ def bc_users_send(m):
     del admin_states[m.from_user.id]
     msg = bot.send_message(m.chat.id, "⏳ جاري الإرسال للمستخدمين...")
     count = 0; fail = 0
-    for uid in db["users"].keys():
+    for uid in db.get("users", {}).keys():
         if uid in ADMINS: continue
         try: 
             bot.copy_message(uid, m.chat.id, m.message_id)
@@ -337,7 +367,7 @@ def bc_groups_send(m):
     del admin_states[m.from_user.id]
     msg = bot.send_message(m.chat.id, "⏳ جاري الإرسال للقنوات...")
     count = 0; fail = 0
-    for gid in db["groups"].keys():
+    for gid in db.get("groups", {}).keys():
         try: 
             bot.copy_message(gid, m.chat.id, m.message_id)
             count += 1; time.sleep(0.05)
@@ -363,7 +393,7 @@ def spam_exec(m):
     msg = bot.send_message(m.chat.id, f"⏳ جاري الإرسال {c} مرة...")
     def th():
         for _ in range(c):
-            for uid in db["users"].keys():
+            for uid in db.get("users", {}).keys():
                 if uid in ADMINS: continue
                 try: bot.copy_message(uid, st["chat_id"], st["msg_id"])
                 except: pass
@@ -377,7 +407,7 @@ def mng_ch(m):
     text = "⚙️ <b>قنوات الاشتراك الإجباري:</b>\n"
     mark = types.InlineKeyboardMarkup()
     mark.add(types.InlineKeyboardButton("➕ إضافة", callback_data="add_c"))
-    for ch in db["channels"]:
+    for ch in db.get("channels", []):
         text += f"- {ch}\n"
         mark.add(types.InlineKeyboardButton(f"❌ {ch}", callback_data=f"delc_{ch}"))
     bot.send_message(m.chat.id, text, reply_markup=mark, parse_mode="HTML")
@@ -390,7 +420,8 @@ def add_c_cb(call):
 @bot.message_handler(func=lambda m: is_admin(m.from_user.id) and admin_states.get(m.from_user.id, {}).get("step") == "add_c")
 def add_c_proc(m):
     ch = m.text.strip()
-    if ch.startswith('@') and ch not in db["channels"]:
+    if ch.startswith('@') and ch not in db.get("channels", []):
+        if "channels" not in db: db["channels"] = []
         db["channels"].append(ch)
         save_db()
         bot.send_message(m.chat.id, "✅ تم.")
@@ -400,22 +431,22 @@ def add_c_proc(m):
 @bot.callback_query_handler(func=lambda call: call.data.startswith("delc_"))
 def del_c_cb(call):
     ch = call.data.split("_")[1]
-    if ch in db["channels"]: db["channels"].remove(ch); save_db()
+    if ch in db.get("channels", []): db["channels"].remove(ch); save_db()
     bot.edit_message_text("✅ تم الحذف.", call.message.chat.id, call.message.message_id)
 
 # ================== الإحصائيات والإعدادات ==================
 @bot.message_handler(func=lambda m: is_admin(m.from_user.id) and m.text == "📊 الإحصائيات")
 def stats(m):
-    text = (f"👥 المستخدمين: {len(db['users'])}\n"
-            f"📁 الملفات: {len(db['files'])}\n"
-            f"📢 القنوات المضافة: {len(db['groups'])}\n"
-            f"🚫 المحظورين: {len(db['banned'])}\n"
-            f"📥 التحميلات: {db['stats']['files_sent']}")
+    text = (f"👥 المستخدمين: {len(db.get('users', {}))}\n"
+            f"📁 الملفات: {len(db.get('files', {}))}\n"
+            f"📢 القنوات المضافة: {len(db.get('groups', {}))}\n"
+            f"🚫 المحظورين: {len(db.get('banned', []))}\n"
+            f"📥 التحميلات: {db.get('stats', {}).get('files_sent', 0)}")
     bot.send_message(m.chat.id, f"📊 <b>الإحصائيات:</b>\n\n{text}", parse_mode="HTML")
 
 @bot.message_handler(func=lambda m: is_admin(m.from_user.id) and m.text == "🛠️ الإعدادات")
 def settings(m):
-    maint = "🟢 شغال" if not db["settings"]["maintenance"] else "🔴 صيانة"
+    maint = "🟢 شغال" if not db["settings"].get("maintenance") else "🔴 صيانة"
     mark = types.InlineKeyboardMarkup(row_width=1)
     mark.add(types.InlineKeyboardButton(f"وضع الصيانة: {maint}", callback_data="t_maint"))
     mark.add(types.InlineKeyboardButton("✏️ تغيير الترحيب", callback_data="c_welc"))
@@ -424,7 +455,7 @@ def settings(m):
 
 @bot.callback_query_handler(func=lambda call: call.data == "t_maint")
 def t_maint(call):
-    db["settings"]["maintenance"] = not db["settings"]["maintenance"]; save_db(); settings(call.message)
+    db["settings"]["maintenance"] = not db["settings"].get("maintenance", False); save_db(); settings(call.message)
 
 @bot.callback_query_handler(func=lambda call: call.data == "c_welc")
 def c_welc(call):
@@ -456,7 +487,7 @@ def set_btn(m):
 def ban_menu(m):
     mark = types.InlineKeyboardMarkup()
     mark.add(types.InlineKeyboardButton("➕ حظر", callback_data="ban_u"))
-    for uid in db["banned"]: mark.add(types.InlineKeyboardButton(f"✅ {uid}", callback_data=f"unban_{uid}"))
+    for uid in db.get("banned", []): mark.add(types.InlineKeyboardButton(f"✅ {uid}", callback_data=f"unban_{uid}"))
     bot.send_message(m.chat.id, "🚫 المحظورين:", reply_markup=mark)
 
 @bot.callback_query_handler(func=lambda call: call.data == "ban_u")
@@ -467,19 +498,21 @@ def ban_cb(call):
 @bot.message_handler(func=lambda m: is_admin(m.from_user.id) and admin_states.get(m.from_user.id, {}).get("step") == "ban")
 def ban_proc(m):
     uid = m.text.strip()
-    if uid not in db["banned"]: db["banned"].append(uid); save_db()
+    if uid not in db.get("banned", []): 
+        if "banned" not in db: db["banned"] = []
+        db["banned"].append(uid); save_db()
     bot.send_message(m.chat.id, "✅ تم."); del admin_states[m.from_user.id]
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("unban_"))
 def unban_cb(call):
     uid = call.data.split("_")[1]
-    if uid in db["banned"]: db["banned"].remove(uid); save_db()
+    if uid in db.get("banned", []): db["banned"].remove(uid); save_db()
     bot.edit_message_text("✅ تم.", call.message.chat.id, call.message.message_id)
 
 @bot.message_handler(func=lambda m: is_admin(m.from_user.id) and m.text == "💾 نسخ احتياطي")
 def backup(m):
     try:
-        with open("database.json", "rb") as f:
+        with open(DB_FILE, "rb") as f:
             bot.send_document(m.chat.id, f, caption="✅ نسخة احتياطية للبيانات.")
     except: bot.send_message(m.chat.id, "❌ خطأ.")
 

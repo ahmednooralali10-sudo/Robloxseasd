@@ -35,10 +35,14 @@ DB_FILE = "database.json"
 
 def get_default_db():
     return {
-        "channels": [], "files": {}, "users": {}, "banned": [], "groups": {},
+        "channels": [], 
+        "files": {}, 
+        "users": {}, 
+        "banned": [], 
+        "groups": {},
         "settings": {
             "maintenance": False, 
-            "welcome": "أهلاً بك! اذا تبي تحط قناتك في اشتراك اجبارب او تنشر ملف تواصل مع المطور @xsaudi96", 
+            "welcome": "أهلاً بك! اذا تبي تحط قناتك في اشتراك اجباري او تنشر ملف تواصل مع المطور @xsaudi96", 
             "daily_file": None, 
             "btn1_text": "📢 قناة المطور", 
             "btn1_url": "https://t.me/mf5rt1",
@@ -54,16 +58,21 @@ def load_db():
         try:
             with open(DB_FILE, 'r', encoding='utf-8') as f: 
                 loaded_db = json.load(f)
-                for key in default_db:
-                    if key not in loaded_db:
-                        loaded_db[key] = default_db[key]
-                    elif isinstance(default_db[key], dict):
-                        for subkey in default_db[key]:
-                            if subkey not in loaded_db[key]:
-                                loaded_db[key][subkey] = default_db[key][subkey]
-                return loaded_db
+                
+            # إصلاح تلقائي: التأكد أن الأنواع تطابق الافتراضي (عشان نصلح مشكلة الـ dict)
+            for key, default_val in default_db.items():
+                if key not in loaded_db:
+                    loaded_db[key] = default_val
+                elif type(loaded_db[key]) != type(default_val):
+                    # إذا كان النوع غلط (زي channels صار dict)، نرجعه list
+                    loaded_db[key] = default_val
+                elif isinstance(default_val, dict):
+                    for subkey, subval in default_val.items():
+                        if subkey not in loaded_db[key]:
+                            loaded_db[key][subkey] = subval
+            return loaded_db
         except Exception as e: 
-            print(f"DB Load Error: {e}")
+            print(f"DB Load Error (Corrupted File): {e}")
     return default_db
 
 def save_db():
@@ -113,7 +122,7 @@ def track_groups(message: types.ChatMemberUpdated):
     try:
         if message.chat.type in ['group', 'supergroup', 'channel']:
             if message.new_chat_member.status in ['member', 'administrator']:
-                if "groups" not in db: db["groups"] = {}
+                if "groups" not in db or not isinstance(db["groups"], dict): db["groups"] = {}
                 db["groups"][str(message.chat.id)] = message.chat.title
                 save_db()
                 bot.send_message(message.chat.id, "✅ تم إضافة البوت بنجاح! أي إذاعة من المطور راح توصل هنا.")
@@ -139,7 +148,7 @@ def start_cmd(message):
     if db["settings"].get("maintenance") and not is_admin(uid): return bot.send_message(message.chat.id, "🛠️ البوت في صيانة حالياً.")
 
     if uid not in db.get("users", {}):
-        if "users" not in db: db["users"] = {}
+        if "users" not in db or not isinstance(db["users"], dict): db["users"] = {}
         db["users"][uid] = {"joined": datetime.now().strftime("%Y-%m-%d"), "downloads": 0}
         if "stats" in db: db["stats"]["joins"] = db["stats"].get("joins", 0) + 1
         save_db()
@@ -155,7 +164,7 @@ def start_cmd(message):
         if fid in db.get("files", {}):
             if not check_sub(uid):
                 m = types.InlineKeyboardMarkup(row_width=1)
-                for ch in db["channels"]:
+                for ch in db.get("channels", []):
                     try:
                         chat = bot.get_chat(ch)
                         m.add(types.InlineKeyboardButton(f"📢 {chat.title}", url=chat.invite_link or f"https://t.me/{chat.username}"))
@@ -165,7 +174,6 @@ def start_cmd(message):
             return send_file(uid, fid)
         else: return bot.send_message(message.chat.id, "❌ الملف غير موجود أو تم حذفه.")
     
-    # رسالة الترحيب العادية
     text = db["settings"].get("welcome", "أهلاً بك!")
     m = types.InlineKeyboardMarkup()
     m.add(types.InlineKeyboardButton("📞 تواصل مع المطور @xsaudi96", url="https://t.me/xsaudi96"))
@@ -212,7 +220,7 @@ def check_cb(call):
         send_file(call.from_user.id, fid)
     else: bot.answer_callback_query(call.id, "❌ لم تشترك بعد.", show_alert=True)
 
-# ================== إدارة القنوات ==================
+# ================== إدارة القنوات (المصححة) ==================
 @bot.message_handler(func=lambda m: is_admin(m.from_user.id) and m.text == "⚙️ القنوات")
 def mng_ch(m):
     text = "⚙️ <b>قنوات الاشتراك الإجباري:</b>\n"
@@ -240,14 +248,19 @@ def add_c_proc(m):
     try:
         bot_member = bot.get_chat_member(ch, bot.get_me().id)
         if bot_member.status not in ['administrator', 'creator']:
-            return bot.send_message(m.chat.id, "❌ البوت ليس مشرفاً في هذه القناة! قم بإضافة البوت كمشرف في القناة أولاً.")
-        if ch in db.get("channels", []):
+            return bot.send_message(m.chat.id, "❌ البوت ليس مشرفاً في هذه القناة! قم بإضافة البوت كمشرف (Admin) في القناة أولاً، ثم أرسل اليوزر مرة ثانية.")
+        
+        # الحماية الجديدة: التأكد أن القنوات قائمة (list) مو قاموس
+        if "channels" not in db or not isinstance(db["channels"], list): 
+            db["channels"] = []
+            
+        if ch in db["channels"]:
             bot.send_message(m.chat.id, "⚠️ هذه القناة مضافة مسبقاً.", reply_markup=get_admin_kb())
         else:
-            if "channels" not in db: db["channels"] = []
             db["channels"].append(ch)
             save_db()
             bot.send_message(m.chat.id, f"✅ تمت إضافة القناة {ch} بنجاح.", reply_markup=get_admin_kb())
+            
         del admin_states[m.from_user.id]
     except Exception as e:
         bot.send_message(m.chat.id, f"❌ خطأ: {e}")
@@ -284,7 +297,7 @@ def add_single_file(m):
         
         if not file_id: return bot.send_message(m.chat.id, "❌ خطأ في الملف.")
         desc = admin_states[m.from_user.id]["desc"]
-        if "files" not in db: db["files"] = {}
+        if "files" not in db or not isinstance(db["files"], dict): db["files"] = {}
         db["files"][fid] = {"file_id": file_id, "name": name, "desc": desc, "date": datetime.now().strftime("%Y-%m-%d"), "downloads": 0}
         save_db()
         del admin_states[m.from_user.id]
@@ -315,7 +328,7 @@ def add_batch_files(m):
         elif m.content_type == 'photo': file_id, name = m.photo[-1].file_id, "صورة.jpg"
         
         desc = admin_states[m.from_user.id]["desc"]
-        if "files" not in db: db["files"] = {}
+        if "files" not in db or not isinstance(db["files"], dict): db["files"] = {}
         db["files"][fid] = {"file_id": file_id, "name": name, "desc": desc, "date": datetime.now().strftime("%Y-%m-%d"), "downloads": 0}
         save_db()
         admin_states[m.from_user.id]["count"] += 1
@@ -498,7 +511,7 @@ def ban_cb(call):
 def ban_proc(m):
     uid = m.text.strip()
     if uid not in db.get("banned", []): 
-        if "banned" not in db: db["banned"] = []
+        if "banned" not in db or not isinstance(db["banned"], list): db["banned"] = []
         db["banned"].append(uid); save_db()
     bot.send_message(m.chat.id, "✅ تم."); del admin_states[m.from_user.id]
 

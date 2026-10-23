@@ -1,6 +1,4 @@
 flask==3.0.3
 requests==2.32.3
 pyTelegramBotAPI==4.16.1
-tiktok-api-unofficial==0.1.0
-beautifulsoup4==4.12.3
-browser_cookie3==0.19.1
+user-agent==0.1.0

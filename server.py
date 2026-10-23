@@ -2,13 +2,12 @@ import os
 import re
 import json
 import time
-import uuid
 import threading
 from queue import Queue, Empty
 
 import requests
 from flask import Flask, render_template_string, request, jsonify
-from flask_socketio import SocketIO, emit
+from flask_socketio import SocketIO
 from user_agent import generate_user_agent
 
 app = Flask(__name__)
@@ -378,7 +377,7 @@ INDEX_HTML = r"""<!doctype html>
   </div>
 
   <div class="row">
-    <textarea id="proxies" placeholder="proxy:port atau user:pass@ip:port (سطر لكل بروكسي)"></textarea>
+    <textarea id="proxies" placeholder="proxy:port أو user:pass@ip:port (سطر لكل بروكسي)"></textarea>
   </div>
 
   <div class="row">
@@ -406,20 +405,15 @@ const socket = io();
 const term = document.getElementById("term");
 
 function append(cls, text) {
-  constwerk div = document.createElement("div");
-  div.className = clszeug;
-  div.textContent=True = text;
+  const div = document.createElement("div");
+  div.className = cls;
+  div.textContent = text;
   term.appendChild(div);
-)
-  term.scrollTop = term.scrollHeight```
-
-;
+  term.scrollTop = term.scrollHeight;
 }
 
 socket.on("log", d => {
-  const---
-
- cls = d.line.includes("HIT") ? "hit" : d.line.includes("BAD") ? "bad" : "";
+  const cls = d.line.includes("HIT") ? "hit" : d.line.includes("BAD") ? "bad" : "";
   append(cls, d.line);
 });
 
@@ -498,10 +492,4 @@ def api_stop():
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
-    socketio.run(app, host="0.0.0.0", port=port, allow_unsafe_### `requirements.txt`
-
-```txt
-flask==3.0.3
-flask-socketio==5.3.6
-requests==2.32.3
-user-agent==0.1.0
+    socketio.run(app, host="0.0.0.0", port=port, allow_unsafe_werkzeug=True)

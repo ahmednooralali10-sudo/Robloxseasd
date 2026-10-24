@@ -34,6 +34,78 @@ logging.basicConfig(
 
 app = Flask(__name__)
 bot = telebot.TeleBot(BOT_TOKEN)
+
+# =========================
+# MESSAGE EFFECT VAULT
+# =========================
+# The owner chooses one effect for everyone from Settings.
+# Telegram applies message_effect_id in private chats only.
+# IDs can be updated from the admin panel by forwarding/sending a message
+# that already has the desired Telegram effect.
+DEFAULT_EFFECTS = {
+    "fire": {"name": "🔥 النار", "id": "5104841245755180586"},
+    "kiss": {"name": "💋 القبلات", "id": "5159305906424382943"},
+    "devil": {"name": "😈 الشيطان", "id": ""},
+    "fireworks": {"name": "🎆 الألعاب النارية", "id": "5046509860389126442"},
+}
+
+def current_effect_id():
+    try:
+        cfg = db.get("settings", {}).get("message_effect", {})
+        if not cfg.get("enabled", False):
+            return ""
+        key = cfg.get("selected", "fire")
+        vault = cfg.get("vault", {})
+        return str(vault.get(key, {}).get("id", "") or "").strip()
+    except Exception:
+        return ""
+
+def _private_chat_id(chat_id):
+    try:
+        return int(chat_id) > 0
+    except (TypeError, ValueError):
+        return False
+
+def _wrap_effect_method(method):
+    def wrapped(chat_id, *args, **kwargs):
+        eid = current_effect_id()
+        added = False
+        if eid and _private_chat_id(chat_id) and "message_effect_id" not in kwargs:
+            kwargs["message_effect_id"] = eid
+            added = True
+        try:
+            return method(chat_id, *args, **kwargs)
+        except Exception as exc:
+            if added:
+                kwargs.pop("message_effect_id", None)
+                logging.warning("Message effect fallback: %s", exc)
+                return method(chat_id, *args, **kwargs)
+            raise
+    return wrapped
+
+# Apply the selected effect to normal outgoing private messages/media.
+for _method_name in ("send_message", "send_photo", "send_video", "send_audio", "send_document", "send_voice", "send_animation"):
+    if hasattr(bot, _method_name):
+        setattr(bot, _method_name, _wrap_effect_method(getattr(bot, _method_name)))
+
+# =========================
+# COLORED TELEGRAM BUTTONS
+# =========================
+def _button_style(text="", callback_data=""):
+    s = f"{text} {callback_data}".lower()
+    danger = ("حذف", "حظر", "إلغاء", "تنظيف", "صيانة", "delete", "del", "ban", "remove", "rmch", "delf", "delstore")
+    success = ("شراء", "الحصول", "إضافة", "تأكيد", "تحقق", "فك حظر", "مجاني", "buy_", "add_", "chk_")
+    if any(w in s for w in danger): return "danger"
+    if any(w in s for w in success): return "success"
+    return "primary"
+
+def inline_button(text, **kwargs):
+    kwargs.setdefault("style", _button_style(text, kwargs.get("callback_data", "")))
+    return types.InlineKeyboardButton(text, **kwargs)
+
+def reply_button(text, style=None):
+    return types.KeyboardButton(text, style=style or _button_style(text, ""))
+
 states = {}
 
 
@@ -43,7 +115,7 @@ states = {}
 
 @app.get("/")
 def home():
-    return {"ok": True, "bot": BOT_USERNAME, "name": "XORE FILE", "version": "7.0"}
+    return {"ok": True, "bot": BOT_USERNAME, "name": "XORE FILE", "version": "7.2"}
 
 @app.get("/health")
 def health():
@@ -75,7 +147,12 @@ def default_db():
             "channel_url": "https://t.me/mf5rt1",
             "daily_points": 10,
             "join_points": 15,
-            "referral_points": 10
+            "referral_points": 10,
+            "message_effect": {
+                "enabled": True,
+                "selected": "fire",
+                "vault": DEFAULT_EFFECTS.copy()
+            }
         },
         "stats": {
             "joins": 0,
@@ -110,6 +187,40 @@ def load_db():
 
 
 db = load_db()
+
+# Database migration / repair. Older versions may have saved channels as a dict,
+# which causes: 'dict' object has no attribute 'append'. Normalize it to a list.
+def repair_database():
+    channels = db.get("channels", [])
+    if isinstance(channels, dict):
+        normalized = []
+        for key, value in channels.items():
+            candidate = value
+            if isinstance(value, dict):
+                candidate = value.get("id", value.get("chat_id", key))
+            elif value in (None, "", False, True):
+                candidate = key
+            try:
+                candidate = int(candidate)
+            except (TypeError, ValueError):
+                candidate = str(candidate).strip()
+                if candidate and not candidate.startswith("@") and not candidate.startswith("-"):
+                    candidate = "@" + candidate
+            if candidate not in normalized:
+                normalized.append(candidate)
+        db["channels"] = normalized
+    elif not isinstance(channels, list):
+        db["channels"] = []
+
+    # Make sure critical collections keep the expected type.
+    for key in ("files", "store", "users", "groups", "coupons"):
+        if not isinstance(db.get(key), dict):
+            db[key] = {}
+    for key in ("banned", "admin_logs"):
+        if not isinstance(db.get(key), list):
+            db[key] = []
+
+repair_database()
 
 
 def save_db():
@@ -273,10 +384,10 @@ def sub_keyboard(payload):
             else:
                 url = getattr(chat, "invite_link", None)
             if url:
-                kb.add(types.InlineKeyboardButton(f"📢 {chat.title}", url=url))
+                kb.add(inline_button(f"📢 {chat.title}", url=url))
         except Exception:
             pass
-    kb.add(types.InlineKeyboardButton("🔄 تحقق من الاشتراك", callback_data=f"subcheck:{payload}"))
+    kb.add(inline_button("🔄 تحقق من الاشتراك", callback_data=f"subcheck:{payload}"))
     return kb
 
 
@@ -344,9 +455,9 @@ def start(message):
         )
 
     kb = types.InlineKeyboardMarkup(row_width=1)
-    kb.add(types.InlineKeyboardButton("🔗 رابط الإحالة", callback_data="myref"))
+    kb.add(inline_button("🔗 رابط الإحالة", callback_data="myref"))
     if db["settings"].get("channel_url"):
-        kb.add(types.InlineKeyboardButton("📢 قناة المطور", url=db["settings"]["channel_url"]))
+        kb.add(inline_button("📢 قناة المطور", url=db["settings"]["channel_url"]))
 
     bot.send_message(
         message.chat.id,
@@ -387,8 +498,8 @@ def send_public_file(chat_id, fid):
 
     kb = types.InlineKeyboardMarkup(row_width=2)
     if db["settings"].get("channel_url"):
-        kb.add(types.InlineKeyboardButton("📢 القناة", url=db["settings"]["channel_url"]))
-    kb.add(types.InlineKeyboardButton("➕ أضف البوت", url=f"{BOT_LINK}?startgroup=true"))
+        kb.add(inline_button("📢 القناة", url=db["settings"]["channel_url"]))
+    kb.add(inline_button("➕ أضف البوت", url=f"{BOT_LINK}?startgroup=true"))
 
     try:
         send_media(
@@ -433,16 +544,16 @@ def show_store_page(chat_id, page=0):
     for item_id, item in chunk:
         price = max(0, int(item.get("price", 0)))
         label = "🎁 مجاني" if price == 0 else f"⭐ {price} نقطة"
-        kb.add(types.InlineKeyboardButton(
+        kb.add(inline_button(
             f"📦 {item.get('name', 'منتج')} • {label}",
             callback_data=f"product:{item_id}"
         ))
 
     nav = []
     if page > 0:
-        nav.append(types.InlineKeyboardButton("⬅️ السابق", callback_data=f"storepage:{page-1}"))
+        nav.append(inline_button("⬅️ السابق", callback_data=f"storepage:{page-1}"))
     if page + 1 < pages:
-        nav.append(types.InlineKeyboardButton("التالي ➡️", callback_data=f"storepage:{page+1}"))
+        nav.append(inline_button("التالي ➡️", callback_data=f"storepage:{page+1}"))
     if nav:
         kb.row(*nav)
 
@@ -486,11 +597,11 @@ def show_product(chat_id, item_id):
     price_text = "🎁 مجاني" if price == 0 else f"⭐ {price} نقطة"
 
     kb = types.InlineKeyboardMarkup(row_width=1)
-    kb.add(types.InlineKeyboardButton(
+    kb.add(inline_button(
         "🎁 الحصول على المنتج" if price == 0 else f"🛒 شراء • {price} نقطة",
         callback_data=f"buy:{item_id}"
     ))
-    kb.add(types.InlineKeyboardButton("🔗 مشاركة المنتج", switch_inline_query=f"{BOT_LINK}?start=store_{item_id}"))
+    kb.add(inline_button("🔗 مشاركة المنتج", switch_inline_query=f"{BOT_LINK}?start=store_{item_id}"))
 
     text = (
         f"╭─────〔 🛍️ <b>المنتج</b> 〕─────╮\n\n"
@@ -663,7 +774,7 @@ def manage_store(m):
         return bot.send_message(m.chat.id, "🛍️ لا توجد منتجات.")
     kb = types.InlineKeyboardMarkup(row_width=1)
     for item_id, item in list(db["store"].items())[:80]:
-        kb.add(types.InlineKeyboardButton(
+        kb.add(inline_button(
             f"⚙️ {item.get('name','منتج')} • ⭐{item.get('price',0)}",
             callback_data=f"manageproduct:{item_id}"
         ))
@@ -679,8 +790,8 @@ def manage_product(call):
     if not item:
         return answer(call, "المنتج غير موجود.", True)
     kb = types.InlineKeyboardMarkup(row_width=1)
-    kb.add(types.InlineKeyboardButton("👁️ معاينة", callback_data=f"product:{item_id}"))
-    kb.add(types.InlineKeyboardButton("🗑️ حذف المنتج", callback_data=f"delproduct:{item_id}"))
+    kb.add(inline_button("👁️ معاينة", callback_data=f"product:{item_id}"))
+    kb.add(inline_button("🗑️ حذف المنتج", callback_data=f"delproduct:{item_id}"))
     bot.send_message(
         call.message.chat.id,
         f"📦 <b>{esc(item.get('name'))}</b>\n"
@@ -840,7 +951,7 @@ def search_file(m):
         return bot.send_message(m.chat.id, "❌ ما لقيت ملف مطابق.", reply_markup=user_kb())
     kb = types.InlineKeyboardMarkup(row_width=1)
     for fid, f in results[:20]:
-        kb.add(types.InlineKeyboardButton(f"📄 {f.get('name','ملف')[:40]}", url=f"{BOT_LINK}?start={fid}"))
+        kb.add(inline_button(f"📄 {f.get('name','ملف')[:40]}", url=f"{BOT_LINK}?start={fid}"))
     bot.send_message(m.chat.id, f"🔎 النتائج ({len(results)}):", reply_markup=kb)
 
 
@@ -865,7 +976,7 @@ def ticket_send(m):
         try:
             bot.forward_message(admin, m.chat.id, m.message_id)
             kb = types.InlineKeyboardMarkup()
-            kb.add(types.InlineKeyboardButton("↩️ الرد على المستخدم", callback_data=f"reply:{uid}"))
+            kb.add(inline_button("↩️ الرد على المستخدم", callback_data=f"reply:{uid}"))
             bot.send_message(admin, f"💌 رسالة من <code>{uid}</code>", parse_mode="HTML", reply_markup=kb)
         except Exception:
             logging.exception("Ticket forwarding failed")
@@ -1000,12 +1111,12 @@ def show_files_page(chat_id, page):
     page = max(0, min(page, pages - 1))
     kb = types.InlineKeyboardMarkup(row_width=1)
     for fid, item in items[page*per_page:(page+1)*per_page]:
-        kb.add(types.InlineKeyboardButton(f"📄 {item.get('name','ملف')[:35]}", callback_data=f"filemanage:{fid}"))
+        kb.add(inline_button(f"📄 {item.get('name','ملف')[:35]}", callback_data=f"filemanage:{fid}"))
     nav = []
     if page > 0:
-        nav.append(types.InlineKeyboardButton("⬅️", callback_data=f"filespage:{page-1}"))
+        nav.append(inline_button("⬅️", callback_data=f"filespage:{page-1}"))
     if page + 1 < pages:
-        nav.append(types.InlineKeyboardButton("➡️", callback_data=f"filespage:{page+1}"))
+        nav.append(inline_button("➡️", callback_data=f"filespage:{page+1}"))
     if nav:
         kb.row(*nav)
     bot.send_message(chat_id, f"📁 الملفات • {page+1}/{pages}", reply_markup=kb)
@@ -1029,7 +1140,7 @@ def file_manage(call):
     if not item:
         return answer(call, "غير موجود.", True)
     kb = types.InlineKeyboardMarkup()
-    kb.add(types.InlineKeyboardButton("🗑️ حذف", callback_data=f"delfile:{fid}"))
+    kb.add(inline_button("🗑️ حذف", callback_data=f"delfile:{fid}"))
     bot.send_message(
         call.message.chat.id,
         f"📄 <b>{esc(item.get('name'))}</b>\n📥 {item.get('downloads',0)} تحميل\n"
@@ -1060,8 +1171,8 @@ def delete_file(call):
 @bot.message_handler(func=lambda m: is_admin(m.from_user.id) and m.text == "📡 القنوات")
 def channels_menu(m):
     kb = types.InlineKeyboardMarkup(row_width=1)
-    kb.add(types.InlineKeyboardButton("➕ إضافة قناة", callback_data="channel:add"))
-    kb.add(types.InlineKeyboardButton("📋 عرض / حذف القنوات", callback_data="channel:list"))
+    kb.add(inline_button("➕ إضافة قناة", callback_data="channel:add"))
+    kb.add(inline_button("📋 عرض / حذف القنوات", callback_data="channel:list"))
     bot.send_message(
         m.chat.id,
         "📡 <b>إدارة الاشتراك الإجباري</b>\n\n"
@@ -1148,7 +1259,7 @@ def channel_list(call):
             title = chat.title
         except Exception:
             title = str(channel_id)
-        kb.add(types.InlineKeyboardButton(f"🗑️ {title}", callback_data=f"channelremove:{channel_id}"))
+        kb.add(inline_button(f"🗑️ {title}", callback_data=f"channelremove:{channel_id}"))
     bot.send_message(call.message.chat.id, "📋 اضغط على القناة لحذفها:", reply_markup=kb)
 
 
@@ -1242,8 +1353,8 @@ def user_search(m):
 def ban_menu(m):
     kb = types.InlineKeyboardMarkup(row_width=2)
     kb.add(
-        types.InlineKeyboardButton("🚫 حظر", callback_data="ban:start"),
-        types.InlineKeyboardButton("✅ فك الحظر", callback_data="unban:start")
+        inline_button("🚫 حظر", callback_data="ban:start"),
+        inline_button("✅ فك الحظر", callback_data="unban:start")
     )
     bot.send_message(m.chat.id, "🚫 إدارة الحظر:", reply_markup=kb)
 
@@ -1285,12 +1396,13 @@ def ban_save(m):
 def settings_menu(m):
     maintenance = bool(db["settings"].get("maintenance"))
     kb = types.InlineKeyboardMarkup(row_width=1)
-    kb.add(types.InlineKeyboardButton(
+    kb.add(inline_button(
         "🟢 إيقاف الصيانة" if maintenance else "🔴 تشغيل الصيانة",
         callback_data="settings:maintenance"
     ))
-    kb.add(types.InlineKeyboardButton("🎁 تعديل نقاط اليومية", callback_data="settings:daily"))
-    kb.add(types.InlineKeyboardButton("📝 تعديل الترحيب", callback_data="settings:welcome"))
+    kb.add(inline_button("🎁 تعديل نقاط اليومية", callback_data="settings:daily"))
+    kb.add(inline_button("📝 تعديل الترحيب", callback_data="settings:welcome"))
+    kb.add(inline_button("✨ خزنة تأثيرات الرسائل", callback_data="settings:effects"))
     bot.send_message(m.chat.id, "⚙️ <b>إعدادات البوت</b>", parse_mode="HTML", reply_markup=kb)
 
 
@@ -1341,6 +1453,116 @@ def welcome_setting_save(m):
     save_db()
     clear_state(m.from_user.id)
     bot.send_message(m.chat.id, "✅ تم تحديث رسالة الترحيب.")
+
+
+# =========================
+# MESSAGE EFFECT VAULT - OWNER ONLY
+# =========================
+
+def effect_vault_markup():
+    cfg = db["settings"].setdefault("message_effect", {"enabled": True, "selected": "fire", "vault": DEFAULT_EFFECTS.copy()})
+    vault = cfg.setdefault("vault", DEFAULT_EFFECTS.copy())
+    selected = cfg.get("selected", "fire")
+    kb = types.InlineKeyboardMarkup(row_width=1)
+    for key in ("fire", "kiss", "devil", "fireworks"):
+        info = vault.setdefault(key, dict(DEFAULT_EFFECTS[key]))
+        mark = "✅ " if cfg.get("enabled") and selected == key else ""
+        suffix = "" if info.get("id") else " • يحتاج تعيين"
+        kb.add(inline_button(f"{mark}{info.get('name', key)}{suffix}", callback_data=f"effect:select:{key}"))
+    kb.add(inline_button("🚫 بدون تأثير", callback_data="effect:off"))
+    kb.add(inline_button("🧰 تعيين/تحديث Effect ID", callback_data="effect:teach"))
+    kb.add(inline_button("🧪 تجربة التأثير الحالي", callback_data="effect:test"))
+    return kb
+
+@bot.callback_query_handler(func=lambda c: c.data == "settings:effects")
+def effects_menu(call):
+    if not is_admin(call.from_user.id):
+        return
+    cfg = db["settings"].setdefault("message_effect", {"enabled": True, "selected": "fire", "vault": DEFAULT_EFFECTS.copy()})
+    selected = cfg.get("selected", "fire")
+    vault = cfg.get("vault", {})
+    current = vault.get(selected, {}).get("name", "بدون") if cfg.get("enabled") else "🚫 بدون تأثير"
+    answer(call)
+    bot.send_message(call.message.chat.id, f"✨ <b>خزنة تأثيرات الرسائل</b>\n\nالحالي: {esc(current)}\n\nاختيار المالك يتطبق مباشرة على رسائل البوت الخاصة للجميع.", parse_mode="HTML", reply_markup=effect_vault_markup())
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith("effect:select:"))
+def effect_select(call):
+    if not is_admin(call.from_user.id):
+        return
+    key = call.data.split(":", 2)[2]
+    cfg = db["settings"].setdefault("message_effect", {"enabled": True, "selected": "fire", "vault": DEFAULT_EFFECTS.copy()})
+    vault = cfg.setdefault("vault", DEFAULT_EFFECTS.copy())
+    info = vault.get(key)
+    if not info:
+        return answer(call, "❌ التأثير غير موجود.", True)
+    if not str(info.get("id", "")).strip():
+        set_state(call.from_user.id, step="teach_effect", effect_key=key)
+        answer(call)
+        return bot.send_message(call.message.chat.id, f"🧰 {info.get('name')} ما عنده ID محفوظ.\n\nأرسل للبوت الآن رسالة عليها هذا التأثير من تيليجرام، وأنا ألتقط effect_id تلقائياً.\nأو أرسل رقم Effect ID مباشرة.")
+    cfg["selected"] = key
+    cfg["enabled"] = True
+    save_db()
+    answer(call, f"✅ تم اختيار {info.get('name')}.", True)
+
+@bot.callback_query_handler(func=lambda c: c.data == "effect:test")
+def effect_test(call):
+    if not is_admin(call.from_user.id):
+        return
+    if not current_effect_id():
+        return answer(call, "❌ لا يوجد تأثير مفعّل أو ID محفوظ.", True)
+    answer(call, "✨ أرسلت لك تجربة التأثير.")
+    bot.send_message(call.message.chat.id, "🔥✨ تجربة تأثير XORE FILE ✨🔥")
+
+@bot.callback_query_handler(func=lambda c: c.data == "effect:off")
+def effect_off(call):
+    if not is_admin(call.from_user.id):
+        return
+    cfg = db["settings"].setdefault("message_effect", {})
+    cfg["enabled"] = False
+    save_db()
+    answer(call, "🚫 تم إيقاف تأثيرات الرسائل للجميع.", True)
+
+@bot.callback_query_handler(func=lambda c: c.data == "effect:teach")
+def effect_teach_choose(call):
+    if not is_admin(call.from_user.id):
+        return
+    kb = types.InlineKeyboardMarkup(row_width=1)
+    vault = db["settings"].setdefault("message_effect", {}).setdefault("vault", DEFAULT_EFFECTS.copy())
+    for key in ("fire", "kiss", "devil", "fireworks"):
+        info = vault.setdefault(key, dict(DEFAULT_EFFECTS[key]))
+        kb.add(inline_button(info.get("name", key), callback_data=f"effect:teach:{key}"))
+    answer(call)
+    bot.send_message(call.message.chat.id, "🧰 اختر التأثير الذي تريد تعيين أو تحديث رقمه:", reply_markup=kb)
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith("effect:teach:"))
+def effect_teach_start(call):
+    if not is_admin(call.from_user.id):
+        return
+    key = call.data.split(":", 2)[2]
+    set_state(call.from_user.id, step="teach_effect", effect_key=key)
+    answer(call)
+    bot.send_message(call.message.chat.id, "✨ أرسل الآن رسالة عليها التأثير المطلوب، أو أرسل Effect ID كرقم.\n\nإذا أرسلت رسالة بتأثير، البوت يقرأ effect_id منها تلقائياً.")
+
+@bot.message_handler(func=lambda m: is_admin(m.from_user.id) and state(m.from_user.id).get("step") == "teach_effect", content_types=["text", "photo", "video", "document", "audio", "voice", "animation", "sticker"])
+def effect_teach_save(m):
+    s = state(m.from_user.id)
+    key = s.get("effect_key")
+    effect_id = str(getattr(m, "effect_id", "") or getattr(m, "message_effect_id", "") or "").strip()
+    if not effect_id and getattr(m, "text", None):
+        candidate = m.text.strip()
+        if candidate.isdigit():
+            effect_id = candidate
+    if not effect_id:
+        return bot.send_message(m.chat.id, "❌ ما قدرت أقرأ Effect ID.\nأرسل رسالة عليها التأثير نفسه، أو أرسل رقم الـID فقط.")
+    cfg = db["settings"].setdefault("message_effect", {"enabled": True, "selected": key, "vault": DEFAULT_EFFECTS.copy()})
+    vault = cfg.setdefault("vault", DEFAULT_EFFECTS.copy())
+    vault.setdefault(key, dict(DEFAULT_EFFECTS.get(key, {"name": key, "id": ""})))
+    vault[key]["id"] = effect_id
+    cfg["selected"] = key
+    cfg["enabled"] = True
+    save_db()
+    clear_state(m.from_user.id)
+    bot.send_message(m.chat.id, f"✅ تم حفظ {vault[key].get('name', key)} وتفعيله للجميع.\n🆔 <code>{effect_id}</code>", parse_mode="HTML", reply_markup=admin_kb())
 
 
 # ============================================================

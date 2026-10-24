@@ -35,6 +35,34 @@ logging.basicConfig(
 app = Flask(__name__)
 bot = telebot.TeleBot(BOT_TOKEN)
 
+# Telegram animated message effect (🔥 by default).
+# Override it from Render with MESSAGE_EFFECT_ID if Telegram changes the ID.
+MESSAGE_EFFECT_ID = os.getenv("MESSAGE_EFFECT_ID", "5104841245755180586").strip()
+
+# Apply the effect automatically to bot text messages in private chats.
+# Telegram only allows message effects in private 1-to-1 chats.
+_original_send_message = bot.send_message
+def _xore_send_message(chat_id, text, *args, **kwargs):
+    if MESSAGE_EFFECT_ID and "message_effect_id" not in kwargs:
+        try:
+            numeric_chat_id = int(chat_id)
+            if numeric_chat_id > 0:
+                kwargs["message_effect_id"] = MESSAGE_EFFECT_ID
+        except (TypeError, ValueError):
+            pass
+    try:
+        return _original_send_message(chat_id, text, *args, **kwargs)
+    except Exception as exc:
+        # Compatibility fallback: if this Telegram/client/library combination
+        # rejects the effect, resend the same message without it.
+        if "message_effect_id" in kwargs:
+            kwargs.pop("message_effect_id", None)
+            logging.warning("Message effect fallback: %s", exc)
+            return _original_send_message(chat_id, text, *args, **kwargs)
+        raise
+
+bot.send_message = _xore_send_message
+
 # =========================
 # COLORED TELEGRAM BUTTONS
 # =========================
@@ -129,6 +157,40 @@ def load_db():
 
 
 db = load_db()
+
+# Database migration / repair. Older versions may have saved channels as a dict,
+# which causes: 'dict' object has no attribute 'append'. Normalize it to a list.
+def repair_database():
+    channels = db.get("channels", [])
+    if isinstance(channels, dict):
+        normalized = []
+        for key, value in channels.items():
+            candidate = value
+            if isinstance(value, dict):
+                candidate = value.get("id", value.get("chat_id", key))
+            elif value in (None, "", False, True):
+                candidate = key
+            try:
+                candidate = int(candidate)
+            except (TypeError, ValueError):
+                candidate = str(candidate).strip()
+                if candidate and not candidate.startswith("@") and not candidate.startswith("-"):
+                    candidate = "@" + candidate
+            if candidate not in normalized:
+                normalized.append(candidate)
+        db["channels"] = normalized
+    elif not isinstance(channels, list):
+        db["channels"] = []
+
+    # Make sure critical collections keep the expected type.
+    for key in ("files", "store", "users", "groups", "coupons"):
+        if not isinstance(db.get(key), dict):
+            db[key] = {}
+    for key in ("banned", "admin_logs"):
+        if not isinstance(db.get(key), list):
+            db[key] = []
+
+repair_database()
 
 
 def save_db():

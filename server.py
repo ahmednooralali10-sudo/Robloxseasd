@@ -35,33 +35,58 @@ logging.basicConfig(
 app = Flask(__name__)
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# Telegram animated message effect (🔥 by default).
-# Override it from Render with MESSAGE_EFFECT_ID if Telegram changes the ID.
-MESSAGE_EFFECT_ID = os.getenv("MESSAGE_EFFECT_ID", "5104841245755180586").strip()
+# =========================
+# MESSAGE EFFECT VAULT
+# =========================
+# The owner chooses one effect for everyone from Settings.
+# Telegram applies message_effect_id in private chats only.
+# IDs can be updated from the admin panel by forwarding/sending a message
+# that already has the desired Telegram effect.
+DEFAULT_EFFECTS = {
+    "fire": {"name": "🔥 النار", "id": "5104841245755180586"},
+    "kiss": {"name": "💋 القبلات", "id": "5159305906424382943"},
+    "devil": {"name": "😈 الشيطان", "id": ""},
+    "fireworks": {"name": "🎆 الألعاب النارية", "id": "5046509860389126442"},
+}
 
-# Apply the effect automatically to bot text messages in private chats.
-# Telegram only allows message effects in private 1-to-1 chats.
-_original_send_message = bot.send_message
-def _xore_send_message(chat_id, text, *args, **kwargs):
-    if MESSAGE_EFFECT_ID and "message_effect_id" not in kwargs:
-        try:
-            numeric_chat_id = int(chat_id)
-            if numeric_chat_id > 0:
-                kwargs["message_effect_id"] = MESSAGE_EFFECT_ID
-        except (TypeError, ValueError):
-            pass
+def current_effect_id():
     try:
-        return _original_send_message(chat_id, text, *args, **kwargs)
-    except Exception as exc:
-        # Compatibility fallback: if this Telegram/client/library combination
-        # rejects the effect, resend the same message without it.
-        if "message_effect_id" in kwargs:
-            kwargs.pop("message_effect_id", None)
-            logging.warning("Message effect fallback: %s", exc)
-            return _original_send_message(chat_id, text, *args, **kwargs)
-        raise
+        cfg = db.get("settings", {}).get("message_effect", {})
+        if not cfg.get("enabled", False):
+            return ""
+        key = cfg.get("selected", "fire")
+        vault = cfg.get("vault", {})
+        return str(vault.get(key, {}).get("id", "") or "").strip()
+    except Exception:
+        return ""
 
-bot.send_message = _xore_send_message
+def _private_chat_id(chat_id):
+    try:
+        return int(chat_id) > 0
+    except (TypeError, ValueError):
+        return False
+
+def _wrap_effect_method(method):
+    def wrapped(chat_id, *args, **kwargs):
+        eid = current_effect_id()
+        added = False
+        if eid and _private_chat_id(chat_id) and "message_effect_id" not in kwargs:
+            kwargs["message_effect_id"] = eid
+            added = True
+        try:
+            return method(chat_id, *args, **kwargs)
+        except Exception as exc:
+            if added:
+                kwargs.pop("message_effect_id", None)
+                logging.warning("Message effect fallback: %s", exc)
+                return method(chat_id, *args, **kwargs)
+            raise
+    return wrapped
+
+# Apply the selected effect to normal outgoing private messages/media.
+for _method_name in ("send_message", "send_photo", "send_video", "send_audio", "send_document", "send_voice", "send_animation"):
+    if hasattr(bot, _method_name):
+        setattr(bot, _method_name, _wrap_effect_method(getattr(bot, _method_name)))
 
 # =========================
 # COLORED TELEGRAM BUTTONS
@@ -122,7 +147,12 @@ def default_db():
             "channel_url": "https://t.me/mf5rt1",
             "daily_points": 10,
             "join_points": 15,
-            "referral_points": 10
+            "referral_points": 10,
+            "message_effect": {
+                "enabled": True,
+                "selected": "fire",
+                "vault": DEFAULT_EFFECTS.copy()
+            }
         },
         "stats": {
             "joins": 0,
@@ -1372,6 +1402,7 @@ def settings_menu(m):
     ))
     kb.add(inline_button("🎁 تعديل نقاط اليومية", callback_data="settings:daily"))
     kb.add(inline_button("📝 تعديل الترحيب", callback_data="settings:welcome"))
+    kb.add(inline_button("✨ خزنة تأثيرات الرسائل", callback_data="settings:effects"))
     bot.send_message(m.chat.id, "⚙️ <b>إعدادات البوت</b>", parse_mode="HTML", reply_markup=kb)
 
 
@@ -1422,6 +1453,28 @@ def welcome_setting_save(m):
     save_db()
     clear_state(m.from_user.id)
     bot.send_message(m.chat.id, "✅ تم تحديث رسالة الترحيب.")
+
+
+# =========================\n# MESSAGE EFFECT VAULT - OWNER ONLY\n# =========================\n\ndef effect_vault_markup():\n    cfg = db["settings"].setdefault("message_effect", {"enabled": True, "selected": "fire", "vault": DEFAULT_EFFECTS.copy()})\n    vault = cfg.setdefault("vault", DEFAULT_EFFECTS.copy())\n    selected = cfg.get("selected", "fire")\n    kb = types.InlineKeyboardMarkup(row_width=1)\n    for key in ("fire", "kiss", "devil", "fireworks"):\n        info = vault.setdefault(key, dict(DEFAULT_EFFECTS[key]))\n        mark = "✅ " if cfg.get("enabled") and selected == key else ""\n        suffix = "" if info.get("id") else " • يحتاج تعيين"\n        kb.add(inline_button(f"{mark}{info.get('name', key)}{suffix}", callback_data=f"effect:select:{key}"))\n    kb.add(inline_button("🚫 بدون تأثير", callback_data="effect:off"))\n    kb.add(inline_button("🧰 تعيين/تحديث Effect ID", callback_data="effect:teach"))\n    return kb\n\n@bot.callback_query_handler(func=lambda c: c.data == "settings:effects")\ndef effects_menu(call):\n    if not is_admin(call.from_user.id):\n        return\n    cfg = db["settings"].setdefault("message_effect", {"enabled": True, "selected": "fire", "vault": DEFAULT_EFFECTS.copy()})\n    selected = cfg.get("selected", "fire")\n    vault = cfg.get("vault", {})\n    current = vault.get(selected, {}).get("name", "بدون") if cfg.get("enabled") else "🚫 بدون تأثير"\n    answer(call)\n    bot.send_message(call.message.chat.id, f"✨ <b>خزنة تأثيرات الرسائل</b>\n\nالحالي: {esc(current)}\n\nاختيار المالك يتطبق مباشرة على رسائل البوت الخاصة للجميع.", parse_mode="HTML", reply_markup=effect_vault_markup())\n\n@bot.callback_query_handler(func=lambda c: c.data.startswith("effect:select:"))\ndef effect_select(call):\n    if not is_admin(call.from_user.id):\n        return\n    key = call.data.split(":", 2)[2]\n    cfg = db["settings"].setdefault("message_effect", {"enabled": True, "selected": "fire", "vault": DEFAULT_EFFECTS.copy()})\n    vault = cfg.setdefault("vault", DEFAULT_EFFECTS.copy())\n    info = vault.get(key)\n    if not info:\n        return answer(call, "❌ التأثير غير موجود.", True)\n    if not str(info.get("id", "")).strip():\n        set_state(call.from_user.id, step="teach_effect", effect_key=key)\n        answer(call)\n        return bot.send_message(call.message.chat.id, f"🧰 {info.get('name')} ما عنده ID محفوظ.\n\nأرسل للبوت الآن رسالة عليها هذا التأثير من تيليجرام، وأنا ألتقط effect_id تلقائياً.\nأو أرسل رقم Effect ID مباشرة.")\n    cfg["selected"] = key\n    cfg["enabled"] = True\n    save_db()\n    answer(call, f"✅ تم اختيار {info.get('name')}.", True)\n\n@bot.callback_query_handler(func=lambda c: c.data == "effect:off")\ndef effect_off(call):\n    if not is_admin(call.from_user.id):\n        return\n    cfg = db["settings"].setdefault("message_effect", {})\n    cfg["enabled"] = False\n    save_db()\n    answer(call, "🚫 تم إيقاف تأثيرات الرسائل للجميع.", True)\n\n@bot.callback_query_handler(func=lambda c: c.data == "effect:teach")\ndef effect_teach_choose(call):\n    if not is_admin(call.from_user.id):\n        return\n    kb = types.InlineKeyboardMarkup(row_width=1)\n    vault = db["settings"].setdefault("message_effect", {}).setdefault("vault", DEFAULT_EFFECTS.copy())\n    for key in ("fire", "kiss", "devil", "fireworks"):\n        info = vault.setdefault(key, dict(DEFAULT_EFFECTS[key]))\n        kb.add(inline_button(info.get("name", key), callback_data=f"effect:teach:{key}"))\n    answer(call)\n    bot.send_message(call.message.chat.id, "🧰 اختر التأثير الذي تريد تعيين أو تحديث رقمه:", reply_markup=kb)\n\n@bot.callback_query_handler(func=lambda c: c.data.startswith("effect:teach:"))\ndef effect_teach_start(call):\n    if not is_admin(call.from_user.id):\n        return\n    key = call.data.split(":", 2)[2]\n    set_state(call.from_user.id, step="teach_effect", effect_key=key)\n    answer(call)\n    bot.send_message(call.message.chat.id, "✨ أرسل الآن رسالة عليها التأثير المطلوب، أو أرسل Effect ID كرقم.\n\nملاحظة: إذا أرسلت رسالة بتأثير، البوت يقرأ effect_id منها تلقائياً.")\n\n@bot.message_handler(func=lambda m: is_admin(m.from_user.id) and state(m.from_user.id).get("step") == "teach_effect", content_types=["text", "photo", "video", "document", "audio", "voice", "animation", "sticker"])
+def effect_teach_save(m):
+    s = state(m.from_user.id)
+    key = s.get("effect_key")
+    effect_id = str(getattr(m, "effect_id", "") or "").strip()
+    if not effect_id and getattr(m, "text", None):
+        candidate = m.text.strip()
+        if candidate.isdigit():
+            effect_id = candidate
+    if not effect_id:
+        return bot.send_message(m.chat.id, "❌ ما قدرت أقرأ Effect ID.\nأرسل رسالة عليها التأثير نفسه، أو أرسل رقم الـID فقط.")
+    cfg = db["settings"].setdefault("message_effect", {"enabled": True, "selected": key, "vault": DEFAULT_EFFECTS.copy()})
+    vault = cfg.setdefault("vault", DEFAULT_EFFECTS.copy())
+    vault.setdefault(key, dict(DEFAULT_EFFECTS.get(key, {"name": key, "id": ""})))
+    vault[key]["id"] = effect_id
+    cfg["selected"] = key
+    cfg["enabled"] = True
+    save_db()
+    clear_state(m.from_user.id)
+    bot.send_message(m.chat.id, f"✅ تم حفظ {vault[key].get('name', key)} وتفعيله للجميع.\n🆔 <code>{effect_id}</code>", parse_mode="HTML", reply_markup=get_admin_kb())
 
 
 # ============================================================

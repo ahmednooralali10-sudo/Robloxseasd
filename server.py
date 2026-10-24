@@ -115,7 +115,7 @@ states = {}
 
 @app.get("/")
 def home():
-    return {"ok": True, "bot": BOT_USERNAME, "name": "XORE FILE", "version": "7.2"}
+    return {"ok": True, "bot": BOT_USERNAME, "name": "XORE FILE", "version": "7.3"}
 
 @app.get("/health")
 def health():
@@ -134,6 +134,7 @@ def default_db():
         "users": {},
         "banned": [],
         "groups": {},
+        "channels_seen": {},
         "coupons": {},
         "admin_logs": [],
         "settings": {
@@ -1286,29 +1287,135 @@ def channel_remove(call):
 # BROADCAST
 # ============================================================
 
+def broadcast_menu():
+    kb = types.InlineKeyboardMarkup(row_width=2)
+    kb.row(
+        inline_button("👤 إذاعة الخاص", callback_data="broadcast:private"),
+        inline_button("👥 إذاعة الجروبات", callback_data="broadcast:groups")
+    )
+    kb.row(
+        inline_button("📢 إذاعة القنوات", callback_data="broadcast:channels"),
+        inline_button("🌐 إذاعة الكل", callback_data="broadcast:all")
+    )
+    kb.add(inline_button("❌ إلغاء", callback_data="broadcast:cancel"))
+    return kb
+
+
+def _classify_saved_chats():
+    """يفصل السجلات القديمة تلقائياً إلى جروبات وقنوات قدر الإمكان."""
+    groups = db.setdefault("groups", {})
+    channels = db.setdefault("channels_seen", {})
+    changed = False
+    for cid, title in list(groups.items()):
+        try:
+            chat = bot.get_chat(int(cid))
+            if getattr(chat, "type", "") == "channel":
+                channels[str(cid)] = getattr(chat, "title", None) or title or str(cid)
+                groups.pop(str(cid), None)
+                changed = True
+        except Exception:
+            pass
+    if changed:
+        save_db()
+
+
+def _broadcast_targets(kind):
+    _classify_saved_chats()
+    private = [str(x) for x in db.get("users", {}).keys()]
+    groups = [str(x) for x in db.get("groups", {}).keys()]
+    channels = [str(x) for x in db.get("channels_seen", {}).keys()]
+    if kind == "private":
+        return private
+    if kind == "groups":
+        return groups
+    if kind == "channels":
+        return channels
+    # إزالة التكرار مع الحفاظ على الترتيب
+    return list(dict.fromkeys(private + groups + channels))
+
+
 @bot.message_handler(func=lambda m: is_admin(m.from_user.id) and m.text == "📣 إذاعة")
 def broadcast_start(m):
-    set_state(m.from_user.id, step="broadcast")
-    bot.send_message(m.chat.id, "📣 أرسل الرسالة التي تريد إذاعتها:")
+    clear_state(m.from_user.id)
+    bot.send_message(
+        m.chat.id,
+        "📣 <b>مركز الإذاعة</b>\n\n"
+        "اختر وين تبي ترسل الإذاعة:\n"
+        "👤 الخاص = مستخدمين البوت\n"
+        "👥 الجروبات = كل جروب البوت موجود فيه ومسجل عنده\n"
+        "📢 القنوات = كل قناة البوت موجود فيها ومسجلة عنده\n"
+        "🌐 الكل = خاص + جروبات + قنوات",
+        parse_mode="HTML",
+        reply_markup=broadcast_menu()
+    )
+
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith("broadcast:"))
+def broadcast_choose(call):
+    if not is_admin(call.from_user.id):
+        return answer(call, "غير مصرح", True)
+    kind = call.data.split(":", 1)[1]
+    if kind == "cancel":
+        clear_state(call.from_user.id)
+        answer(call, "تم الإلغاء")
+        try:
+            bot.edit_message_text("❌ تم إلغاء الإذاعة.", call.message.chat.id, call.message.message_id)
+        except Exception:
+            pass
+        return
+    labels = {
+        "private": "👤 الخاص",
+        "groups": "👥 الجروبات",
+        "channels": "📢 القنوات",
+        "all": "🌐 الكل",
+    }
+    if kind not in labels:
+        return answer(call, "خيار غير معروف", True)
+    targets = _broadcast_targets(kind)
+    set_state(call.from_user.id, step="broadcast_wait", broadcast_kind=kind)
+    answer(call, "تم الاختيار")
+    bot.send_message(
+        call.message.chat.id,
+        f"📣 النوع: <b>{labels[kind]}</b>\n"
+        f"🎯 المسجل حالياً: <b>{len(targets)}</b>\n\n"
+        "أرسل الآن أي رسالة تريد إذاعتها (نص/صورة/فيديو/ملف/ملصق/صوت...):",
+        parse_mode="HTML"
+    )
 
 
 @bot.message_handler(
-    func=lambda m: is_admin(m.from_user.id) and state(m.from_user.id).get("step") == "broadcast",
-    content_types=["text", "photo", "video", "document", "audio"]
+    func=lambda m: is_admin(m.from_user.id) and state(m.from_user.id).get("step") == "broadcast_wait",
+    content_types=["text", "photo", "video", "document", "audio", "voice", "animation", "sticker", "video_note", "contact", "location", "venue", "poll"]
 )
 def broadcast_send(m):
+    st = state(m.from_user.id)
+    kind = st.get("broadcast_kind", "private")
     clear_state(m.from_user.id)
-    status = bot.send_message(m.chat.id, "⏳ جاري الإرسال...")
+    targets = _broadcast_targets(kind)
+    status = bot.send_message(m.chat.id, f"⏳ جاري الإرسال إلى {len(targets)} هدف...")
     ok = fail = 0
-    for uid in list(db.get("users", {}).keys()):
+    failed_ids = []
+    for target in targets:
         try:
-            bot.copy_message(uid, m.chat.id, m.message_id)
+            bot.copy_message(target, m.chat.id, m.message_id)
             ok += 1
         except Exception:
             fail += 1
+            if len(failed_ids) < 20:
+                failed_ids.append(str(target))
         time.sleep(0.04)
-    bot.edit_message_text(f"✅ تم: {ok}\n❌ فشل: {fail}", m.chat.id, status.message_id)
-    log_admin(m.from_user.id, f"Broadcast ok={ok}, fail={fail}")
+    labels = {"private":"الخاص", "groups":"الجروبات", "channels":"القنوات", "all":"الكل"}
+    extra = ""
+    if failed_ids:
+        extra = "\n\n⚠️ أول أهداف فشل الإرسال لها:\n<code>" + "\n".join(map(esc, failed_ids)) + "</code>"
+    bot.edit_message_text(
+        f"📣 <b>انتهت إذاعة {labels.get(kind, kind)}</b>\n\n"
+        f"🎯 الإجمالي: {len(targets)}\n"
+        f"✅ تم: {ok}\n"
+        f"❌ فشل: {fail}" + extra,
+        m.chat.id, status.message_id, parse_mode="HTML"
+    )
+    log_admin(m.from_user.id, f"Broadcast kind={kind}, total={len(targets)}, ok={ok}, fail={fail}")
 
 
 # ============================================================
@@ -1642,6 +1749,25 @@ def cancel(m):
 # TRACK GROUPS
 # ============================================================
 
+def remember_chat(chat):
+    """يحفظ أي جروب/قناة يعرفها البوت حتى تظهر في نظام الإذاعة."""
+    try:
+        ctype = getattr(chat, "type", "")
+        cid = str(chat.id)
+        title = getattr(chat, "title", None) or getattr(chat, "username", None) or cid
+        if ctype in ("group", "supergroup"):
+            db.setdefault("groups", {})[cid] = title
+            db.setdefault("channels_seen", {}).pop(cid, None)
+        elif ctype == "channel":
+            db.setdefault("channels_seen", {})[cid] = title
+            db.setdefault("groups", {}).pop(cid, None)
+        else:
+            return
+        save_db()
+    except Exception:
+        logging.exception("Chat remember failed")
+
+
 @bot.my_chat_member_handler()
 def track_groups(update):
     try:
@@ -1649,13 +1775,26 @@ def track_groups(update):
             return
         cid = str(update.chat.id)
         status = update.new_chat_member.status
-        if status in ("member", "administrator"):
-            db["groups"][cid] = update.chat.title or ""
+        if status in ("member", "administrator", "restricted"):
+            remember_chat(update.chat)
         elif status in ("left", "kicked"):
-            db["groups"].pop(cid, None)
-        save_db()
+            db.setdefault("groups", {}).pop(cid, None)
+            db.setdefault("channels_seen", {}).pop(cid, None)
+            save_db()
     except Exception:
-        logging.exception("Group tracking failed")
+        logging.exception("Chat membership tracking failed")
+
+
+# يسجل أيضاً أي جروب يصل منه تحديث عادي. هذا يفيد قواعد البيانات القديمة.
+@bot.message_handler(func=lambda m: getattr(m.chat, "type", "") in ("group", "supergroup"),
+                     content_types=["text", "photo", "video", "document", "audio", "voice", "animation", "sticker", "video_note", "contact", "location", "venue", "poll"])
+def remember_group_from_message(m):
+    remember_chat(m.chat)
+
+
+@bot.channel_post_handler(content_types=["text", "photo", "video", "document", "audio", "voice", "animation", "sticker", "video_note", "contact", "location", "venue", "poll"])
+def remember_channel_from_post(m):
+    remember_chat(m.chat)
 
 
 # ============================================================
@@ -1673,7 +1812,7 @@ def run_bot():
                 timeout=60,
                 long_polling_timeout=60,
                 skip_pending=True,
-                allowed_updates=["message", "callback_query", "my_chat_member"]
+                allowed_updates=["message", "channel_post", "callback_query", "my_chat_member"]
             )
         except Exception:
             logging.exception("Polling crashed; restarting in 5 seconds")
